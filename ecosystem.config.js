@@ -11,7 +11,7 @@
 module.exports = {
     apps: [
         {
-            name: "dux-daily",
+            name: "Disk Analysis Daily",
             namespace: "Local",
             script: "dux",
             args: ["scan"],

@@ -6,6 +6,7 @@
 - [ ] TUI 完整 tree view（目前 v1 為 flat list）
 - [ ] CSV section 拆分（每個 section 一個檔？目前一個檔多 section）
 - [ ] launchd + systemd 範本文件
+- [ ] **scan 已改寫為 du-based + CSV only**：show / diff / tui 仍依賴 SQLite，目前會回 "no scans in DB yet"，需要未來重作讓它們讀 CSV
 
 ## 1.x 功能
 

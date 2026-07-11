@@ -1,24 +1,9 @@
 {
-    "exclude_list": [
-        "node_modules", ".git", ".venv", "venv", ".cache",
-        ".tox", ".pytest_cache", "DerivedData",
-        "Library/Caches", "Library/Developer",
-        "/System/Volumes/Data", ".Trash", "tmp", ".tmp", "__pycache__",
-        "/dev", "/proc", "/sys", "/private/var", "/System/Volumes"
-    ],
     "privacy_redact_paths": [
         ".ssh", ".gnupg", ".aws", ".kube", ".docker",
         "Library/Keychains", "Library/Application Support/Keybase",
         ".config/gh/hosts.yml"
     ],
-    "workers": 5,
-    "breakdown_threshold": "200MB",
-    "cold_size_threshold": "100MB",
-    "cold_age_days": 180,
     "overview_root_depth": 2,
-    "overview_home_depth": 1,
-    "top_n": 10,
-    "privacy_redact": true,
-    "follow_symlinks": false,
-    "interactive": "auto"
+    "top_n": 10
 }

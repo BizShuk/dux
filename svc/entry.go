@@ -2,13 +2,9 @@
 //
 // Files in this package:
 //   - entry.go:        data types (Entry / ReportEntry / DuplicateGroup / ReportSection)
-//   - scanner.go:      concurrent directory scan with exclude + privacy redact
-//   - collector.go:    in-memory aggregate + mtime-aware cache + DB persistence
 //   - db.go:           SQLite via gorm schema + DAO for entries table
-//   - hasher.go:       3-stage xxHash duplicate detection
-//   - report.go:       Overview / Breakdown / Cold / Duplicate section builders + categorize
+//   - report.go:       Overview / Breakdown / Diff section builders + categorize
 //   - csv_writer.go:   defensive CSV writer (BOM + UTF-8 sanitize)
-//   - metrics.go:      BufferedMetric with JSONL offline replay
 //   - render.go:       terminal table + bar chart rendering
 package svc
 

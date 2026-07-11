@@ -8,7 +8,19 @@ import (
 	"time"
 )
 
-// openTestDB is defined in collector_test.go and shared.
+// openTestDB returns a fresh on-disk SQLite-backed DB for the test to use.
+// Each call gets an independent DB so tests do not leak state into each other.
+// Uses a per-test temp dir so the t.Cleanup removes the file when done.
+func openTestDB(t *testing.T) *DB {
+	t.Helper()
+	tmp := filepath.Join(t.TempDir(), "test.db")
+	d, err := OpenDB(tmp)
+	if err != nil {
+		t.Fatalf("OpenDB(%s): %v", tmp, err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
 
 func TestOpenDB_InvalidPath(t *testing.T) {
 	_, err := OpenDB("")

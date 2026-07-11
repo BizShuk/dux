@@ -22,10 +22,12 @@ import (
 
 // Scan flag vars. Kept minimal: only date / threshold / top / progress.
 var (
-	scanDate     string
-	scanMinSize  string
-	scanTop      int
-	scanProgress bool
+	scanDate        string
+	scanMinSize     string
+	scanTop         int
+	scanProgress    bool
+	scanExcludes    []string
+	scanExcludeFrom string
 )
 
 var ScanCmd = &cobra.Command{
@@ -33,13 +35,12 @@ var ScanCmd = &cobra.Command{
 	Short: "Walk $HOME with du and write entries ≥ threshold to CSV",
 	Long: `Run a disk-usage scan rooted at the user's home directory and persist
 the entries that meet the size threshold (default 200MB) to a CSV file under
-the configured CSV directory. The CSV uses the same schema as other sections
-(path, size, change_size, is_duplicate, last_accessed, category) so it can be
-ingested by spreadsheets or scripts.
+the configured CSV directory. The CSV uses the v2 schema:
 
-By design this command is single-shot and write-only — it does NOT populate
-SQLite, so ` + "`show`" + `, ` + "`diff`" + `, and ` + "`tui`" + ` will not find new
-data until they are rewired to read the CSV in a future change.`,
+  path,is_dir,depth,size,change_size,is_duplicate,last_accessed,category
+
+so it can be ingested by spreadsheets, scripts, or the disk-analyzer
+` + "`show`" + `, ` + "`diff`" + `, and ` + "`tui`" + ` sub-commands.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		sig := make(chan os.Signal, 1)
@@ -84,11 +85,23 @@ data until they are rewired to read the CSV in a future change.`,
 		_ = scanTop // reserved for a future breakdown top-N display; ignored for now
 		_ = scanProgress // reserved; future PR will wire a live counter
 
+		// Merge excludes: config provides persistent baseline, CLI appends.
+		// ExcludeFrom is a single absolute path, so CLI overrides config when set.
+		mergedExcludes := make([]string, 0, len(cfg.Excludes)+len(scanExcludes))
+		mergedExcludes = append(mergedExcludes, cfg.Excludes...)
+		mergedExcludes = append(mergedExcludes, scanExcludes...)
+		excludeFrom := scanExcludeFrom
+		if excludeFrom == "" {
+			excludeFrom = cfg.ExcludeFrom
+		}
+
 		duOpts := du.Options{
-			Paths:     []string{home},
-			AllFiles:  true,             // emit both files and directories
-			Threshold: threshold,        // positive value → exclude entries smaller than this
-			MaxDepth:  math.MaxInt,      // -1 in du.Options = unlimited; 0 would mean "summarize only"
+			Paths:       []string{home},
+			AllFiles:    true,             // emit both files and directories
+			Threshold:   threshold,        // positive value → exclude entries smaller than this
+			MaxDepth:    math.MaxInt,      // -1 in du.Options = unlimited; 0 would mean "summarize only"
+			Excludes:    mergedExcludes,
+			ExcludeFrom: excludeFrom,
 		}
 
 		slog.Info("scan: starting du walk",
@@ -106,16 +119,14 @@ data until they are rewired to read the CSV in a future change.`,
 		// because du does not expose atime; CSV consumers can interpret it as
 		// "most recent activity observed in the subtree" for directories.
 		//
-		// Depth-0 (the scan root, $HOME) is dropped: du's `shouldEmit` always
-		// emits the root regardless of threshold, but the user's intent is
-		// "files and folders ≥ threshold", not the home-dir total itself.
+		// All entries (including depth-0 = $HOME root) are written so the TUI
+		// has a tree root to anchor. `du`'s shouldEmit applies the size threshold
+		// uniformly, so entries below threshold are already absent.
 		rows := make([]svc.ReportEntry, 0, len(result.Entries))
 		for _, e := range result.Entries {
-			if e.Depth == 0 {
-				continue
-			}
 			rows = append(rows, svc.ReportEntry{
 				Path:         e.Path,
+				IsDir:        e.IsDir,
 				Size:         int64(e.Info.Size),
 				Category:     svc.CategorizeByExt(e.Path),
 				LastAccessed: e.Info.MaxTime,
@@ -157,4 +168,10 @@ func init() {
 	ScanCmd.Flags().IntVar(&scanTop, "top", 10, "top-N entries per section (reserved)")
 	ScanCmd.Flags().BoolVarP(&scanProgress, "progress", "p", false,
 		"show live progress (reserved; not wired in this version)")
+	ScanCmd.Flags().StringSliceVar(&scanExcludes, "exclude", nil,
+		"glob pattern to exclude (repeatable); merged with config excludes "+
+			"(basename match: \"*.tmp\"; path match: \"Library/Caches\")")
+	ScanCmd.Flags().StringVar(&scanExcludeFrom, "exclude-from", "",
+		"path to file of exclude patterns (one per line, # = comment); "+
+			"overrides config exclude_from when set")
 }

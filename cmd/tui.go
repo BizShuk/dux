@@ -6,6 +6,7 @@ import (
 
 	"github.com/bizshuk/disk-analyzer/config"
 	"github.com/bizshuk/disk-analyzer/handler"
+	"github.com/bizshuk/disk-analyzer/svc"
 	"github.com/bizshuk/disk-analyzer/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,24 +20,26 @@ var (
 
 var TuiCmd = &cobra.Command{
 	Use:   "tui",
-	Short: "Launch the interactive tree browser (loads latest scan from DB)",
+	Short: "Launch the interactive tree browser (loads latest scan CSV)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := handler.Wire()
 		if err != nil {
 			return fmt.Errorf("tui: wire: %w", err)
 		}
-		defer r.Close()
 
 		date := tuiDate
 		if date == "" {
 			var lerr error
 			date, lerr = r.LatestDate()
 			if lerr != nil {
+				if errors.Is(lerr, svc.ErrNoScans) {
+					return errors.New("tui: no scan CSV yet — run 'scan' first")
+				}
 				return fmt.Errorf("tui: pick date: %w", lerr)
 			}
 		}
 		if date == "" {
-			return errors.New("tui: no scans in DB yet — run 'scan' first")
+			return errors.New("tui: no scans yet — run 'scan' first")
 		}
 		rows, err := r.ReadDate(date)
 		if err != nil {
@@ -62,7 +65,7 @@ var TuiCmd = &cobra.Command{
 func init() {
 	RootCmd.AddCommand(TuiCmd)
 	TuiCmd.Flags().StringVar(&tuiDate, "date", "",
-		"scan date to load (default: latest in DB)")
+		"scan date to load (default: latest scan CSV)")
 	TuiCmd.Flags().BoolVar(&tuiAllowMark, "allow-mark", false,
 		"enable mark/unmark keys")
 }

@@ -1,13 +1,12 @@
 package svc
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
-// Category constants — stable strings used in DB rows and CSV columns.
+// Category constants — stable strings used in CSV columns and report rows.
 const (
 	CatMedia   = "media"
 	CatArchive = "archive"
@@ -48,11 +47,11 @@ var extToCategory = map[string]string{
 // Returns CatOther if no match. Fast-path only — magic-byte detection is
 // performed separately (see CategorizeByContent).
 func CategorizeByExt(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
+	ext := strings.ToLower(extDot(path))
 	if cat, ok := extToCategory[ext]; ok {
 		return cat
 	}
-	base := strings.ToLower(filepath.Base(path))
+	base := strings.ToLower(pathBase(path))
 	for _, compound := range []string{".tar.gz", ".tar.bz2", ".tar.xz"} {
 		if strings.HasSuffix(base, compound) {
 			return CatArchive
@@ -75,6 +74,25 @@ func CategorizeByContent(path string, head []byte) string {
 		return CatVM
 	}
 	return CategorizeByExt(path)
+}
+
+// extDot / pathBase avoid pulling in path/filepath for these hot lookups.
+func extDot(p string) string {
+	for i := len(p) - 1; i >= 0 && p[i] != '/'; i-- {
+		if p[i] == '.' {
+			return p[i:]
+		}
+	}
+	return ""
+}
+
+func pathBase(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' {
+			return p[i+1:]
+		}
+	}
+	return p
 }
 
 // ReportBuilder accumulates ReportSections produced for a single scan.
@@ -138,7 +156,6 @@ func (b *ReportBuilder) Sections() []ReportSection {
 }
 
 // SortEntriesByPath sorts every section's entries by Path ascending.
-// Required by the spec: every section is sorted by path.
 func (b *ReportBuilder) SortEntriesByPath() {
 	for i := range b.sections {
 		entries := b.sections[i].Entries
@@ -149,16 +166,17 @@ func (b *ReportBuilder) SortEntriesByPath() {
 	}
 }
 
-// BuildOverview walks entries and groups them by depth-prefix up to maxDepth.
-// Returns the top-N directories by size at each level (within parent).
+// BuildOverview groups entries by depth-prefix under root up to maxDepth and
+// returns the top-N directories by size. The "overview" is intentionally
+// shallow: maxDepth=2 means we look at "/" → {Users, Library, var, ...} →
+// {shuk, public, root, ...}. Per spec: root gets 2 levels.
 //
-// The "overview" is intentionally shallow: maxDepth=2 means we look at
-// "/" → {Users, Library, var, ...} → {shuk, public, root, ...}.
-// Per the spec: root gets 2 levels, home gets 1.
+// Only directory entries are considered; files at the boundary are dropped.
 //
-// For each directory at the *boundary* depth (maxDepth), include it as one row.
-// For each intermediate directory (depth 0..maxDepth-1), also include it.
-func BuildOverview(stream func(cb func(EntryRow) error) error, root string, maxDepth int, topN int) []ReportEntry {
+// Input must already be sorted (or order doesn't matter — we sort by size
+// desc at the end anyway). After the CSV-backed refactor, the streamer
+// closure is gone — callers load CSV rows directly via svc.ReadCSV.
+func BuildOverview(entries []ReportEntry, root string, maxDepth int, topN int) []ReportEntry {
 	if maxDepth <= 0 {
 		maxDepth = 1
 	}
@@ -166,15 +184,15 @@ func BuildOverview(stream func(cb func(EntryRow) error) error, root string, maxD
 		size int64
 		path string
 	}
-	seen := make(map[string]*pair)
-	_ = stream(func(e EntryRow) error {
+	seen := make(map[string]*pair, len(entries))
+	for i := range entries {
+		e := entries[i]
 		if !e.IsDir {
-			return nil
+			continue
 		}
 		if !strings.HasPrefix(e.Path, root) {
-			return nil
+			continue
 		}
-		// Compute relative depth under root.
 		rel := strings.TrimPrefix(e.Path, root)
 		rel = strings.TrimPrefix(rel, "/")
 		depth := 0
@@ -182,21 +200,20 @@ func BuildOverview(stream func(cb func(EntryRow) error) error, root string, maxD
 			depth = len(strings.Split(rel, "/"))
 		}
 		if depth > maxDepth {
-			return nil
+			continue
 		}
 		if existing, ok := seen[e.Path]; ok {
-			if e.SizeBytes > existing.size {
-				existing.size = e.SizeBytes
+			if e.Size > existing.size {
+				existing.size = e.Size
 			}
-			return nil
+			continue
 		}
-		seen[e.Path] = &pair{size: e.SizeBytes, path: e.Path}
-		return nil
-	})
+		seen[e.Path] = &pair{size: e.Size, path: e.Path}
+	}
 	out := make([]ReportEntry, 0, len(seen))
 	for _, p := range seen {
 		out = append(out, ReportEntry{
-			Path: p.path, Size: p.size, Category: "directory", Depth: 0,
+			Path: p.path, Size: p.size, IsDir: true, Category: "directory", Depth: 0,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Size > out[j].Size })
@@ -206,105 +223,17 @@ func BuildOverview(stream func(cb func(EntryRow) error) error, root string, maxD
 	return out
 }
 
-// BuildBreakdown returns entries whose size >= minSize, restricted to
-// those under root. Per spec: directories >= minSize must be "broken down
-// further" — we don't recurse here; the caller decides whether to walk
-// deeper (typically means: include children of such directories too).
+// DiffEntries computes the change_size for each path using prev as the
+// baseline. prev may be nil (no baseline) → all change_size = current.size.
 //
-// We mark entries that are directories with Depth >= 0; the caller is
-// responsible for any further recursion via the scanner.
-func BuildBreakdown(stream func(cb func(EntryRow) error) error, root string, minSize int64) []ReportEntry {
-	out := make([]ReportEntry, 0)
-	_ = stream(func(e EntryRow) error {
-		if !strings.HasPrefix(e.Path, root) {
-			return nil
-		}
-		if e.SizeBytes < minSize {
-			return nil
-		}
-		out = append(out, ReportEntry{
-			Path:         e.Path,
-			Size:         e.SizeBytes,
-			Category:     CategorizeByExt(e.Path),
-			LastAccessed: time.Unix(e.ATimeUnix, 0),
-			Depth:        e.Depth,
-		})
-		return nil
-	})
-	return out
-}
-
-// BuildCold returns entries considered "cold": atime older than coldAge AND
-// size >= coldMinSize. Linux noatime means atime may be zero — those are
-// flagged as cold (true to spec, since we can't trust atime on noatime fs).
-func BuildCold(stream func(cb func(EntryRow) error) error, cutoff time.Time, coldMinSize int64) []ReportEntry {
-	out := make([]ReportEntry, 0)
-	_ = stream(func(e EntryRow) error {
-		if e.IsDir {
-			return nil
-		}
-		if e.SizeBytes < coldMinSize {
-			return nil
-		}
-		aTime := time.Unix(e.ATimeUnix, 0)
-		if !aTime.IsZero() && aTime.After(cutoff) {
-			return nil
-		}
-		out = append(out, ReportEntry{
-			Path:         e.Path,
-			Size:         e.SizeBytes,
-			Category:     CategorizeByExt(e.Path),
-			LastAccessed: aTime,
-			Depth:        e.Depth,
-		})
-		return nil
-	})
-	return out
-}
-
-// AttachDuplicates marks which entries are duplicates per the supplied groups.
-// Mutates entries (or returns a new slice) so callers can show the indicator.
-// We do NOT remove entries from sections — duplicates are also legitimate
-// entries that just happen to have a twin. The "is_duplicate" flag plus the
-// Separate DuplicateSection are both visible.
-func AttachDuplicates(groups []DuplicateGroup, entries []ReportEntry) []ReportEntry {
-	dupSet := make(map[string]bool, 64)
-	for _, g := range groups {
-		for _, p := range g.Paths {
-			dupSet[p] = true
-		}
-	}
-	for i := range entries {
-		entries[i].IsDuplicate = dupSet[entries[i].Path]
-	}
-	return entries
-}
-
-// DuplicateSectionEntries flattens duplicate groups into one row per path.
-func DuplicateSectionEntries(groups []DuplicateGroup) []ReportEntry {
-	out := make([]ReportEntry, 0, 16)
-	for _, g := range groups {
-		for _, p := range g.Paths {
-			out = append(out, ReportEntry{
-				Path:        p,
-				Size:        g.Size,
-				IsDuplicate: true,
-				Category:    CategorizeByExt(p),
-				Depth:       0,
-			})
-		}
-	}
-	return out
-}
-
-// DiffEntries computes the change_size for each path using prev as the baseline.
-// prev may be nil (no baseline) → all change_size = current.size.
+// Returns ReportEntry rows (not Entry[]) because downstream rendering
+// (svc.TopGrowth, svc/render.PrintTable) consumes ReportEntry shape.
 func DiffEntries(current []Entry, prev []Entry) []ReportEntry {
 	if prev == nil {
 		out := make([]ReportEntry, 0, len(current))
 		for _, e := range current {
 			out = append(out, ReportEntry{
-				Path: e.Path, Size: e.Size, ChangeSize: e.Size,
+				Path: e.Path, IsDir: e.IsDir, Size: e.Size, ChangeSize: e.Size,
 				LastAccessed: e.LastAccessed,
 				Category:     CategorizeByExt(e.Path),
 				Depth:        e.Depth,
@@ -320,7 +249,7 @@ func DiffEntries(current []Entry, prev []Entry) []ReportEntry {
 	for _, e := range current {
 		cs := e.Size - prevSize[e.Path]
 		out = append(out, ReportEntry{
-			Path: e.Path, Size: e.Size, ChangeSize: cs,
+			Path: e.Path, IsDir: e.IsDir, Size: e.Size, ChangeSize: cs,
 			LastAccessed: e.LastAccessed,
 			Category:     CategorizeByExt(e.Path),
 			Depth:        e.Depth,
@@ -347,3 +276,6 @@ func TopGrowth(entries []ReportEntry, n int) []ReportEntry {
 	}
 	return out
 }
+
+// Compile-time assertion: time import retained for future LastAccessed work.
+var _ = time.Time{}

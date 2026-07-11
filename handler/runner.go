@@ -1,81 +1,65 @@
-// Package handler is the DI container for the disk-analyzer sub-commands.
-// After the scan-rewrite, the only remaining responsibilities are:
-//   - open the SQLite DB once per invocation (show / diff / tui read from it)
-//   - dispatch each sub-command to a single Run* method on Runner
+// Package handler is the façade for disk-analyzer sub-commands that need
+// cross-cutting settings (show / diff / tui). After the SQLite removal,
+// Runner no longer holds long-lived state — every method either reads a
+// CSV file or transforms an in-memory slice.
 //
-// `scan` is now driven directly from cmd/scan.go using the `du` library and
-// no longer touches the DB, the metric buffer, or the excludes/privacy layers.
-// `show` / `diff` / `tui` are kept as-is so historical CSV/DB consumers
-// continue to work until a future PR rewires them to read the CSV.
+// `scan` is driven directly from cmd/scan.go using the `du` library and
+// does not flow through this package.
 package handler
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bizshuk/disk-analyzer/config"
 	"github.com/bizshuk/disk-analyzer/svc"
 )
 
-// Runner is the DI container for disk-analyzer commands that need the DB.
-// One Runner per command invocation, no long-lived state.
+// Runner is the façade for show / diff / tui. One Runner per command
+// invocation; no resources to close (CSV reads are local and short-lived).
 type Runner struct {
 	cfg *config.Settings
-	db  *svc.DB
 }
 
-// Wire builds a Runner with the DB initialized.
-// Must be called after config.Default().
+// Wire builds a Runner with the active settings. Must be called after
+// config.Default(). Returns an error when settings are missing or CSVDir
+// is empty (which would prevent any subsequent CSV read from resolving).
 func Wire() (*Runner, error) {
 	cfg := config.GlobalSettings
 	if cfg == nil {
 		return nil, errors.New("handler: config not initialized — call config.Default() first")
 	}
-	if cfg.SQLitePath == "" {
-		return nil, errors.New("handler: cfg.SQLitePath empty — config validate() may have failed")
+	if cfg.CSVDir == "" {
+		return nil, errors.New("handler: cfg.CSVDir empty — config validate() may have failed")
 	}
-	db, err := svc.OpenDB(cfg.SQLitePath)
-	if err != nil {
-		return nil, fmt.Errorf("handler: open db: %w", err)
-	}
-	return &Runner{cfg: cfg, db: db}, nil
+	return &Runner{cfg: cfg}, nil
 }
 
-// Close releases owned resources. Best-effort: errors are logged but not
-// propagated (the process is exiting).
-func (r *Runner) Close() {
-	if r == nil {
-		return
-	}
-	if err := r.db.Close(); err != nil {
-		slog.Warn("runner: db close failed", "err", err)
-	}
-}
-
-// RunShow reads historical rows for a given date and prints them.
-// Empty date → latest in DB.
+// RunShow reads a scan CSV and prints the root overview section.
+// Empty date → latest CSV by stem (filename date, ISO-8601).
 func (r *Runner) RunShow(ctx context.Context, date string, prefix string) error {
 	_ = ctx
 	if date == "" {
-		var err error
-		date, err = r.db.LatestDate()
+		latest, err := svc.LatestDate(r.cfg.CSVDir)
 		if err != nil {
+			if errors.Is(err, svc.ErrNoScans) {
+				return errors.New("show: no scan CSV yet — run 'scan' first")
+			}
 			return fmt.Errorf("show: latest date: %w", err)
 		}
-		if date == "" {
-			return errors.New("show: no scans in DB yet")
-		}
+		date = latest
 	}
-	streamer := func(cb func(svc.EntryRow) error) error {
-		return r.db.StreamEntries(date, cb)
+	rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date+".csv"))
+	if err != nil {
+		return fmt.Errorf("show: read csv: %w", err)
 	}
+	overviewRoot := svc.BuildOverview(rows, "/", r.cfg.OverviewRootDepth, r.cfg.TopN)
+
 	b := svc.NewReportBuilder()
-	overviewRoot := svc.BuildOverview(streamer, "/", r.cfg.OverviewRootDepth, r.cfg.TopN)
 	b.Set(svc.SectionOverviewRoot, overviewRoot)
 	b.SortEntriesByPath()
 
@@ -91,26 +75,28 @@ func (r *Runner) RunShow(ctx context.Context, date string, prefix string) error 
 			sections[i].Entries = filtered
 		}
 	}
-	// Pass prefix through to the renderer so it can emit a "Showing:"
-	// banner when the prefix is short enough to render in full.
 	ropts := svc.DefaultRenderOptions()
 	ropts.Prefix = prefix
 	svc.PrintSections(os.Stdout, sections, ropts)
 	return nil
 }
 
-// RunDiff compares two dates and prints top growth entries.
+// RunDiff compares two scan CSVs and prints the top growth paths.
 func (r *Runner) RunDiff(ctx context.Context, date1, date2 string, prefix string) error {
 	_ = ctx
 	if date1 == "" || date2 == "" {
 		return errors.New("diff: both --from and --to dates required")
 	}
-	d1Rows, d2Rows, err := r.db.EntriesBetween(date1, date2)
+	d1Rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date1+".csv"))
 	if err != nil {
-		return fmt.Errorf("diff: read: %w", err)
+		return fmt.Errorf("diff: read %s: %w", date1, err)
 	}
-	d1Entries := rowsToEntries(d1Rows)
-	d2Entries := rowsToEntries(d2Rows)
+	d2Rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date2+".csv"))
+	if err != nil {
+		return fmt.Errorf("diff: read %s: %w", date2, err)
+	}
+	d1Entries := reportsToEntries(d1Rows)
+	d2Entries := reportsToEntries(d2Rows)
 	diff := svc.DiffEntries(d2Entries, d1Entries)
 
 	if prefix != "" {
@@ -132,39 +118,42 @@ func (r *Runner) RunDiff(ctx context.Context, date1, date2 string, prefix string
 	return nil
 }
 
-// LatestDate returns the most recent scan_date present in the DB.
-// Exposed so cmd/tui.go can pick the latest scan to load.
+// LatestDate returns the most recent scan date found in CSVDir.
 func (r *Runner) LatestDate() (string, error) {
-	return r.db.LatestDate()
+	return svc.LatestDate(r.cfg.CSVDir)
 }
 
-// ReadDate returns the EntryRows for a given date.
-// Exposed so cmd/tui.go can load the raw rows for tree rendering.
+// ReadDate returns the snapshot rows for a given date, adapted to the
+// slim EntryRow shape the TUI tree builder consumes.
 func (r *Runner) ReadDate(date string) ([]svc.EntryRow, error) {
-	return r.db.EntriesForDate(date)
+	rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date+".csv"))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]svc.EntryRow, len(rows))
+	for i, r := range rows {
+		out[i] = svc.EntryRow{
+			Path:      r.Path,
+			IsDir:     r.IsDir,
+			SizeBytes: r.Size,
+			Depth:     r.Depth,
+		}
+	}
+	return out, nil
 }
 
-// rowsToEntries converts DB rows back into the Entry type used in collectors.
-func rowsToEntries(rows []svc.EntryRow) []svc.Entry {
-	out := make([]svc.Entry, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, svc.Entry{
-			Path: r.Path,
-			Size: r.SizeBytes,
-			LastModified: time.Unix(r.MTimeUnix, 0),
-			LastAccessed: time.Unix(r.ATimeUnix, 0),
-			IsDir: r.IsDir,
-			Depth: r.Depth,
-		})
+// reportsToEntries converts ReportEntry rows (the CSV shape) into the
+// narrower Entry shape consumed by svc.DiffEntries.
+func reportsToEntries(rows []svc.ReportEntry) []svc.Entry {
+	out := make([]svc.Entry, len(rows))
+	for i, r := range rows {
+		out[i] = svc.Entry{
+			Path:         r.Path,
+			Size:         r.Size,
+			LastAccessed: r.LastAccessed,
+			IsDir:        r.IsDir,
+			Depth:        r.Depth,
+		}
 	}
 	return out
-}
-
-// retainDateShape ensures the date string is YYYY-MM-DD; returns "" if invalid.
-func retainDateShape(s string) string {
-	_, err := time.Parse("2006-01-02", s)
-	if err != nil {
-		return ""
-	}
-	return s
 }

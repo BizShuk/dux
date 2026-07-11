@@ -27,7 +27,6 @@ var DiffCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("diff: wire: %w", err)
 		}
-		defer r.Close()
 		return r.RunDiff(context.Background(), diffFrom, diffTo, diffPrefix)
 	},
 }

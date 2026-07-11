@@ -1,17 +1,17 @@
 // Package config loads disk-analyzer settings from gosdk + default_settings.json
 // and exposes the few fields the remaining sub-commands actually need.
 //
-// After the scan rewrite, the surviving sub-commands (`show`, `diff`, `tui`)
-// only require:
+// After the SQLite removal (2026-07-12), the surviving sub-commands
+// (`scan`, `show`, `diff`, `tui`) only require:
 //
 //   - TopN — for `show` / `diff` top-N truncation
 //   - OverviewRootDepth — for `show` root overview depth
 //   - PrivacyRedactPaths — for `tui` path redaction patterns
-//   - SQLitePath / DataDir / CSVDir / LogDir — derived from gosdk config paths
+//   - Excludes / ExcludeFrom — passed to du.Usage by `scan`
+//   - DataDir / CSVDir / LogDir — derived from gosdk config paths
 //
-// All other historical fields (breakdown threshold, cold data, excludes,
-// roots, workers, follow-symlinks, interactive) were exclusively consumed by
-// the dropped `scan` pipeline.
+// Historical fields (SQLitePath, breakdown threshold, cold data, roots,
+// workers, follow-symlinks, interactive) are gone.
 package config
 
 import (
@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/bizshuk/gosdk/config"
@@ -37,11 +36,19 @@ type Settings struct {
 	OverviewRootDepth int      `json:"overview_root_depth" mapstructure:"overview_root_depth"`
 	PrivacyRedactPaths []string `json:"privacy_redact_paths" mapstructure:"privacy_redact_paths"`
 
+	// Excludes is a list of glob patterns passed to du.Usage.
+	// Patterns without a path separator match basenames (e.g. "*.tmp");
+	// patterns with "/" match full paths (e.g. "Library/Caches").
+	Excludes []string `json:"excludes" mapstructure:"excludes"`
+
+	// ExcludeFrom is a path to a file of exclude patterns, one per line.
+	// Empty lines and lines starting with # are ignored.
+	ExcludeFrom string `json:"exclude_from" mapstructure:"exclude_from"`
+
 	// Derived paths — populated by validate() from gosdk config paths.
-	SQLitePath string `json:"-"`
-	DataDir    string `json:"-"`
-	CSVDir     string `json:"-"`
-	LogDir     string `json:"-"`
+	DataDir string `json:"-"`
+	CSVDir  string `json:"-"`
+	LogDir  string `json:"-"`
 }
 
 // GlobalSettings is the package-level singleton holding the active Settings.
@@ -63,8 +70,6 @@ func Default() error {
 	if err := GlobalSettings.validate(); err != nil {
 		return fmt.Errorf("validate settings: %w", err)
 	}
-	// Set SQLITE_PATH so gosdk/db.InitSQLite() can pick it up on next call.
-	viper.Set("SQLITE_PATH", GlobalSettings.SQLitePath)
 	return nil
 }
 
@@ -82,6 +87,11 @@ func (s *Settings) validate() error {
 	for i, p := range s.PrivacyRedactPaths {
 		s.PrivacyRedactPaths[i] = expandHomeOrEnv(p)
 	}
+	// ExcludeFrom is an absolute file path; expand "~" / "$HOME" so users
+	// can write "~/excludes.txt" instead of "/Users/me/excludes.txt".
+	if s.ExcludeFrom != "" {
+		s.ExcludeFrom = expandHomeOrEnv(s.ExcludeFrom)
+	}
 	// Derive paths from gosdk.
 	dataDir := config.GetAppDataDir()
 	if dataDir == "" {
@@ -90,7 +100,6 @@ func (s *Settings) validate() error {
 	s.DataDir = dataDir
 	s.CSVDir = dataDir
 	s.LogDir = config.GetAppLogDir()
-	s.SQLitePath = filepath.Join(dataDir, "history.db")
 	if err := os.MkdirAll(s.DataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir %s: %w", s.DataDir, err)
 	}

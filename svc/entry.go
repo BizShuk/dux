@@ -2,9 +2,9 @@
 //
 // Files in this package:
 //   - entry.go:        data types (Entry / ReportEntry / DuplicateGroup / ReportSection)
-//   - db.go:           SQLite via gorm schema + DAO for entries table
-//   - report.go:       Overview / Breakdown / Diff section builders + categorize
-//   - csv_writer.go:   defensive CSV writer (BOM + UTF-8 sanitize)
+//   - csv_writer.go:   defensive CSV writer v2 (BOM + UTF-8 sanitize)
+//   - csv_reader.go:   CSV reader + date discovery (v1/v2 backwards-compat)
+//   - report.go:       Overview / Diff section builders + categorize
 //   - render.go:       terminal table + bar chart rendering
 package svc
 
@@ -29,12 +29,13 @@ type Entry struct {
 // It includes the diff against the historical baseline and the categorization.
 type ReportEntry struct {
 	Path         string    `json:"path"`
+	IsDir        bool      `json:"is_dir"`        // directory vs file; needed by TUI tree builder
 	Size         int64     `json:"size"`
 	ChangeSize   int64     `json:"change_size"`  // current.size - prev.size; 0 if no baseline
 	IsDuplicate  bool      `json:"is_duplicate"`
 	LastAccessed time.Time `json:"last_accessed"`
 	Category     string    `json:"category"`     // media / archive / code / vm / other
-	Depth        int       `json:"depth"`
+	Depth        int       `json:"depth"`        // distance from scan root (0 = root itself)
 }
 
 // DuplicateGroup is a cluster of paths that share the same content hash
@@ -44,6 +45,20 @@ type DuplicateGroup struct {
 	Size  int64    `json:"size"`
 	Paths []string `json:"paths"`
 	Stage int      `json:"stage"` // 1=size-only, 2=header match, 3=full match
+}
+
+// EntryRow is the slim snapshot shape consumed by the TUI tree builder.
+// It carries just enough for buildTree to attach a node to its parent:
+// Path, IsDir, SizeBytes, and Depth.
+//
+// The CSV-backed reader (svc.ReadCSV) returns ReportEntry; the handler
+// adapts ReportEntry → EntryRow before handing to tui.NewModel. Keeping
+// this type avoids leaking the 8-column CSV shape into the TUI layer.
+type EntryRow struct {
+	Path      string
+	IsDir     bool
+	SizeBytes int64
+	Depth     int
 }
 
 // WastedBytes returns how many bytes would be reclaimed if all-but-one

@@ -19,7 +19,7 @@
 - 增量快取（重複掃描浪費 IO）— *（已移除）*
 - 重複偵測（手動 `fdupes` 對 10TB 太慢）— *（已移除）*
 - 冷資料識別（半年沒用的大檔）— *（已移除）*
-- TUI 互動瀏覽 — *（待重接 CSV）*
+- TUI 互動瀏覽 — *（已重接 CSV；2026-07-12 落地）*
 - 觀測整合（VM + Loki）— *（VM metric 已移除；僅 slog）*
 - 排程友善（pm2 / launchd / systemd）
 
@@ -95,12 +95,27 @@ svc.WriteCSV  ── BOM + UTF-8 sanitize + section comment
 
 ### 3.5 CSV 編碼
 
-> ✅ 本節仍有效。
+> ✅ 2026-07-12 更新：SQLite 層已移除，show / diff / tui 全部改讀本格式。Schema v2 加 is_dir / depth 兩欄。
+
+**Schema v2（現行）**
+
+```
+path, is_dir, depth, size, change_size, is_duplicate, last_accessed, category
+```
 
 - BOM (`\xEF\xBB\xBF`) 給 Excel 開啟
 - `utf8.ValidString()` 驗證 path；無效位元組換 `?`
-- 每個 section 開頭 `# <name>` 註解行
-- 欄位：`path, size, change_size, is_duplicate, last_accessed, category`
+- 一律 8 欄 header；無 `# <name>` section 註解（已移除；test 強制不寫）
+- scan 不再丟 depth-0 條目（root + 子目錄全進 CSV），TUI 才有 tree root 可掛
+
+**Schema v1（已廢，僅供 backward read）**
+
+```
+path, size, change_size, is_duplicate, last_accessed, category
+```
+
+- `svc.ReadCSV` 偵測到 v1 header 時 graceful 處理：`IsDir=false`、`Depth=0`
+- 結果：legacy CSV 仍可讀；show overview 為空（因為 BuildOverview 只收 dir）；diff 仍能算 size 變化
 
 ### 3.6 Metric 離線 buffer
 

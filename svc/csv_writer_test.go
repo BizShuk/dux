@@ -16,7 +16,7 @@ func TestWriteCSV_BOMAndHeader(t *testing.T) {
 			Name:  SectionOverviewRoot,
 			Title: "Overview — /",
 			Entries: []ReportEntry{
-				{Path: "/", Size: 100, Category: "directory"},
+				{Path: "/", IsDir: true, Depth: 0, Size: 100, Category: "directory"},
 			},
 		},
 	}
@@ -35,11 +35,11 @@ func TestWriteCSV_BOMAndHeader(t *testing.T) {
 	if strings.Contains(str, "# overview-root") {
 		t.Errorf("expected no section header, got: %s", str)
 	}
-	if !strings.Contains(str, "path,size,change_size") {
-		t.Errorf("expected column header, got: %s", str)
+	if !strings.Contains(str, "path,is_dir,depth,size,change_size") {
+		t.Errorf("expected column header (v2 schema), got: %s", str)
 	}
-	if !strings.Contains(str, "/,100") {
-		t.Errorf("expected row data, got: %s", str)
+	if !strings.Contains(str, "/,true,0,100") {
+		t.Errorf("expected row data with is_dir/depth, got: %s", str)
 	}
 }
 
@@ -139,55 +139,6 @@ func TestReportBuilder_SortEntriesByPath(t *testing.T) {
 	}
 	if secs[0].Entries[2].Path != "/z" {
 		t.Errorf("expected /z last, got %s", secs[0].Entries[2].Path)
-	}
-}
-
-func TestBuildOverview_GroupsByDepth(t *testing.T) {
-	entries := []Entry{
-		{Path: "/", IsDir: true, Size: 1000, Depth: 0},
-		{Path: "/Users", IsDir: true, Size: 500, Depth: 1},
-		{Path: "/Users/x", IsDir: true, Size: 100, Depth: 2},
-		{Path: "/var", IsDir: true, Size: 200, Depth: 1},
-	}
-	stream := func(cb func(EntryRow) error) error {
-		for _, e := range entries {
-			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	got := BuildOverview(stream, "/", 2, 10)
-	if len(got) == 0 {
-		t.Fatal("expected some entries")
-	}
-	// Top should be / by size.
-	if got[0].Path != "/" {
-		t.Errorf("expected / first, got %s", got[0].Path)
-	}
-}
-
-func TestBuildCold_SkipsRecent(t *testing.T) {
-	cutoff := time.Now().Add(-200 * 24 * time.Hour)
-	entries := []Entry{
-		{Path: "/old/big", IsDir: false, Size: 200 * 1024 * 1024, LastAccessed: cutoff.Add(-24 * time.Hour)},
-		{Path: "/old/small", IsDir: false, Size: 1, LastAccessed: cutoff.Add(-24 * time.Hour)},
-		{Path: "/recent/big", IsDir: false, Size: 200 * 1024 * 1024, LastAccessed: time.Now()},
-	}
-	stream := func(cb func(EntryRow) error) error {
-		for _, e := range entries {
-			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	cold := BuildCold(stream, cutoff, 100*1024*1024)
-	if len(cold) != 1 {
-		t.Errorf("expected 1 cold entry, got %d", len(cold))
-	}
-	if cold[0].Path != "/old/big" {
-		t.Errorf("expected /old/big, got %s", cold[0].Path)
 	}
 }
 

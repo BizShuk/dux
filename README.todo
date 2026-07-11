@@ -1,22 +1,18 @@
 # TODO
 
-- [ ] 增量快取實作（目前 v1 為簡化版，未真正比對 mtime 跳過子樹）
-
-## 1.x 功能
-
-- [ ] 支援自訂 exclude glob（目前只支援精確與子字串比對）
 
 ## 觀測整合
 
-- [ ] show / diff / tui 重接 CSV 後，重新引入 VictoriaMetrics summary push（目前停用）
 
 ## Infra
 
-- [ ] 把 `go build -o bin/disk-analyzer .` / `go test -race ./...` 包成 Makefile target？
-  （2026-07-12 決定**不**先補；待有跨平台需求再說）
-
 ## Archive
 
+- [x] show / diff / tui 改讀 CSV；svc/db.go、svc/db_test.go、config.Settings.SQLitePath、gosdk/db 依賴一併移除；CSV schema 擴充為 v2（path, is_dir, depth, size, change_size, is_duplicate, last_accessed, category）；reader 向後相容 v1。@2026-07-12_01:15:00 @Completed
 - [x] pm2 排程從「週五 05:47」改為「每日 06:00」並修掉過期 cd path / dead flags / 缺 binary 三大 bug @2026-07-12_00:23:04 @Completed
 - [x] 完成 pm2 排程上線驗證 @2026-07-12_00:15:30 @Completed
 - [x] TUI 完整 tree view（目前 v1 為 flat list） @2026-07-12_00:15:17 @Completed
+
+### 1.x 功能
+
+- [x] 支援自訂 exclude glob（CLI `--exclude` StringSlice + `--exclude-from` 與 config `excludes` / `exclude_from` 雙介面；merged 後傳給 `du.Options`）@2026-07-12_01:05:30 @Completed

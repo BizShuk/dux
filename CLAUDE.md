@@ -12,7 +12,7 @@ disk-analyzer/
 ├── du/                      # 並行 walk（核心 scan pipeline）
 │   ├── du.go                # public API: Usage() + Options
 │   ├── walk.go              # filepath.WalkDir 變體 + shouldEmit
-│   ├── exclude.go           # 子字串與精確比對
+│   ├── exclude.go           # glob exclude (bmatcuk/doublestar；支援 ** / * / basename)
 │   └── stat_unix.go         # Lstat / capacity 計算
 ├── handler/                 # Runner DI container + show/diff/tui methods
 ├── svc/                     # domain 邏輯 — 寫 CSV / 報表 / render
@@ -47,6 +47,7 @@ disk-analyzer/
 - **拒絕 `gosdk/process` 守護**：排程由 pm2 處理
 - **scan 不推 VictoriaMetrics**：v1 簡化版移除 `BufferedMetric`；觀測只剩 slog → stdout
 - **CSV BOM**：加 `\xEF\xBB\xBF` 給 Excel；防禦性 UTF-8 sanitize（無效位元組換 `?`）
+- **`du/` 唯一外部 dep**：`github.com/bmatcuk/doublestar/v4` 提供 `**` glob；其他仍是 stdlib + `golang.org/x/sys`
 
 ## gosdk 整合
 

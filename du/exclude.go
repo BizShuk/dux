@@ -2,18 +2,33 @@ package du
 
 import (
 	"bufio"
+	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // excludeSet holds glob patterns used to skip files/directories during walk.
-// Mirrors coreutils du's --exclude / --exclude-from / -X functionality.
+//
+// Patterns follow shell-glob syntax with ** support (any number of path
+// segments including zero). Examples:
+//
+//	*.tmp                  — basename match
+//	**/node_modules        — node_modules at any depth
+//	foo/**/bar             — bar anywhere under foo
+//	**/*.log               — all .log files anywhere
+//
+// Patterns are validated once at construction; invalid ones are dropped with
+// a warning so one bad pattern doesn't disable the whole set. Match cost per
+// entry is one doublestar.PathMatch per pattern.
 type excludeSet struct {
-	patterns []string
+	patterns []string // pre-validated; only valid patterns are stored
 }
 
-// newExcludeSet creates an excludeSet from the given glob patterns.
+// newExcludeSet trims and validates patterns. Invalid patterns are skipped
+// (logged at WARN) — better to silently under-exclude than to fail the whole
+// scan because of one typo.
 func newExcludeSet(patterns []string) *excludeSet {
 	filtered := make([]string, 0, len(patterns))
 	for _, p := range patterns {
@@ -22,10 +37,19 @@ func newExcludeSet(patterns []string) *excludeSet {
 			filtered = append(filtered, p)
 		}
 	}
-	return &excludeSet{patterns: filtered}
+	valid := make([]string, 0, len(filtered))
+	for _, p := range filtered {
+		if !doublestar.ValidatePathPattern(p) {
+			slog.Warn("exclude: invalid pattern, skipping",
+				"pattern", p)
+			continue
+		}
+		valid = append(valid, p)
+	}
+	return &excludeSet{patterns: valid}
 }
 
-// merge adds all patterns from other into this set.
+// merge appends another set's patterns into this one.
 func (e *excludeSet) merge(other *excludeSet) {
 	if other == nil {
 		return
@@ -33,37 +57,33 @@ func (e *excludeSet) merge(other *excludeSet) {
 	e.patterns = append(e.patterns, other.patterns...)
 }
 
-// match returns true if the given path or basename should be excluded.
-// Patterns are matched against the basename using filepath.Match (glob).
-// If a pattern contains a path separator, it is matched against the full path.
+// match reports whether fullPath matches any pattern. Patterns without a
+// path separator are matched against basename (legacy du --exclude behaviour:
+// "*.tmp" matches every file ending in .tmp regardless of depth). Patterns
+// containing "/" are matched against the full path with doublestar ** semantics.
 func (e *excludeSet) match(fullPath, basename string) bool {
-	for _, pattern := range e.patterns {
-		// Pattern with separator → match against full path.
-		if strings.Contains(pattern, string(filepath.Separator)) || strings.Contains(pattern, "/") {
-			if ok, _ := filepath.Match(pattern, fullPath); ok {
-				return true
-			}
-			// Also try matching just the trailing components.
-			if ok, _ := filepath.Match(pattern, filepath.Base(fullPath)); ok {
-				return true
-			}
-			continue
+	for _, p := range e.patterns {
+		var name string
+		if strings.ContainsRune(p, '/') {
+			name = fullPath
+		} else {
+			name = basename
 		}
-		// Basename glob match.
-		if ok, _ := filepath.Match(pattern, basename); ok {
+		if matched, _ := doublestar.PathMatch(p, name); matched {
 			return true
 		}
 	}
 	return false
 }
 
-// empty reports whether the set has no patterns.
+// empty reports whether the set has no usable patterns.
 func (e *excludeSet) empty() bool {
 	return len(e.patterns) == 0
 }
 
 // loadExcludeFile reads exclude patterns from a file, one per line.
-// Empty lines and lines starting with # are ignored.
+// Empty lines and lines starting with # are ignored. Invalid patterns are
+// dropped with a warning (same policy as newExcludeSet).
 func loadExcludeFile(path string) (*excludeSet, error) {
 	f, err := os.Open(path)
 	if err != nil {

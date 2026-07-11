@@ -287,3 +287,141 @@ func TestUsage_ApparentVsBlocks(t *testing.T) {
 	assert.GreaterOrEqual(t, blockSize, uint64(100),
 		"block size should be at least the file size")
 }
+
+// TestUsage_ExcludeSubdir verifies that a basename pattern matching a
+// directory short-circuits the walker — neither the directory itself nor
+// any of its descendants appear in the output.
+func TestUsage_ExcludeSubdir(t *testing.T) {
+	root := makeTree(t)
+
+	result, err := Usage(context.Background(), Options{
+		Paths:        []string{root},
+		ApparentSize: true,
+		AllFiles:     true,
+		MaxDepth:     -1,
+		Excludes:     []string{"sub"},
+	})
+	require.NoError(t, err)
+
+	for _, e := range result.Entries {
+		rel, err := filepath.Rel(root, e.Path)
+		require.NoError(t, err)
+		if rel == "." {
+			continue
+		}
+		assert.NotEqual(t, "sub", rel,
+			"excluded dir itself should not appear: %s", e.Path)
+		assert.NotContains(t, rel, string(filepath.Separator)+"sub"+string(filepath.Separator),
+			"no entry should live under excluded subdir: %s", e.Path)
+	}
+}
+
+// TestUsage_ExcludeFromFile verifies that loadExcludeFile picks up every
+// non-comment, non-empty line and feeds it into the exclude set; pattern
+// semantics (basename glob etc.) follow the same path as Options.Excludes.
+func TestUsage_ExcludeFromFile(t *testing.T) {
+	root := makeTree(t)
+
+	// Mix of: comment, blank line, glob pattern, plain basename.
+	exclFile := filepath.Join(t.TempDir(), "excludes.txt")
+	require.NoError(t, os.WriteFile(exclFile,
+		[]byte("# comment line\n\n*.txt\ndeep\n"), 0o644))
+
+	result, err := Usage(context.Background(), Options{
+		Paths:        []string{root},
+		ApparentSize: true,
+		AllFiles:     true,
+		MaxDepth:     -1,
+		ExcludeFrom:  exclFile,
+	})
+	require.NoError(t, err)
+
+	for _, e := range result.Entries {
+		rel, err := filepath.Rel(root, e.Path)
+		require.NoError(t, err)
+		if rel == "." {
+			continue
+		}
+		assert.NotContains(t, rel, ".txt",
+			"exclude-from *.txt should drop txt entries: %s", e.Path)
+		assert.NotEqual(t, "deep", rel,
+			"exclude-from 'deep' should drop deep dir: %s", e.Path)
+	}
+}
+
+// TestExcludeSet_Doublestar verifies that ** semantics work across the three
+// common shapes: prefix-doublestar (**/foo), middle-doublestar (foo/**/bar),
+// and suffix-doublestar (**/*.log). Pinned to baldinof's successor
+// bmatcuk/doublestar which provides shell-glob-flavoured matching.
+func TestExcludeSet_Doublestar(t *testing.T) {
+	excl := newExcludeSet([]string{
+		"**/node_modules",
+		"foo/**/bar",
+		"**/*.log",
+	})
+	require.NotNil(t, excl)
+	require.False(t, excl.empty(), "all patterns should validate")
+
+	cases := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		// **/node_modules: must align with path structure (leading ** matches any prefix).
+		{"**/node_modules", "/u/node_modules", true},
+		{"**/node_modules", "/u/p/node_modules", true},
+		{"**/node_modules", "/u/p/q/node_modules", true},
+		{"**/node_modules", "/u/other", false},
+		// foo/**/bar: pattern anchor "foo" must be the first path segment.
+		// Use paths that start with "foo" (no leading slash) to test the at-any-depth
+		// semantics; see the e2e test for the absolute-path variant below.
+		{"foo/**/bar", "foo/bar", true},
+		{"foo/**/bar", "foo/v/bar", true},
+		{"foo/**/bar", "foo/v/w/bar", true},
+		{"foo/**/bar", "foo/baz", false},
+		{"foo/**/bar", "other/bar", false},
+		// **/*.log: leading ** absorbs arbitrary prefix, *.log matches the basename.
+		{"**/*.log", "app.log", true},
+		{"**/*.log", "p/app.log", true},
+		{"**/*.log", "p/q/app.log", true},
+		{"**/*.log", "app.txt", false},
+	}
+	for _, c := range cases {
+		// Build a per-pattern set so each case tests one pattern at a time.
+		single := newExcludeSet([]string{c.pattern})
+		got := single.match(c.path, filepath.Base(c.path))
+		assert.Equal(t, c.want, got,
+			"match(%q, %q)", c.pattern, c.path)
+	}
+}
+
+// TestUsage_ExcludeDoublestar is the end-to-end version: build a tree with
+// node_modules at two different depths, scan with **/node_modules, assert
+// every node_modules entry (dir or file, at any depth) is gone.
+func TestUsage_ExcludeDoublestar(t *testing.T) {
+	root := t.TempDir()
+	for _, sub := range []string{
+		"a/node_modules/x",
+		"a/b/node_modules/y",
+		"keep",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, sub), 0o755))
+	}
+	writeFile(t, filepath.Join(root, "a", "node_modules", "x", "f"), 4096)
+	writeFile(t, filepath.Join(root, "a", "b", "node_modules", "y", "f"), 4096)
+	writeFile(t, filepath.Join(root, "keep", "f"), 4096)
+
+	result, err := Usage(context.Background(), Options{
+		Paths:        []string{root},
+		ApparentSize: true,
+		AllFiles:     true,
+		MaxDepth:     -1,
+		Excludes:     []string{"**/node_modules"},
+	})
+	require.NoError(t, err)
+
+	for _, e := range result.Entries {
+		assert.NotContains(t, e.Path, "node_modules",
+			"**/node_modules should drop every node_modules entry: %s", e.Path)
+	}
+}

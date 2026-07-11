@@ -7,7 +7,8 @@
 // filtering options (max-depth, threshold, exclude, separate-dirs,
 // one-file-system).
 //
-// Zero external dependencies beyond stdlib + golang.org/x/sys.
+// Zero external dependencies beyond stdlib + golang.org/x/sys, plus
+// github.com/bmatcuk/doublestar/v4 for ** glob support in exclude patterns.
 package du
 
 import (

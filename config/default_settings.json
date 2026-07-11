@@ -4,6 +4,8 @@
         "Library/Keychains", "Library/Application Support/Keybase",
         ".config/gh/hosts.yml"
     ],
+    "excludes": [],
+    "exclude_from": "",
     "overview_root_depth": 2,
     "top_n": 10
 }

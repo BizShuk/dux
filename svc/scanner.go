@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,26 @@ type ScanOptions struct {
 	PrivacyRedact        bool
 	PrivacyRedactPaths   []string
 	PrivacyRedactAllPaths bool // if true, paths are not recorded at all (size only)
+
+	// Progress, if non-nil, is invoked periodically during the scan with
+	// snapshot counters. Caller is responsible for thread-safety of any state
+	// inside Progress; it runs in the scanner's internal goroutine.
+	//
+	// The callback should be cheap (no I/O, no locking of large structures)
+	// because it runs every ~250ms. For UI rendering, prefer writing to a
+	// channel that a dedicated goroutine drains.
+	Progress func(snapshot ProgressSnapshot)
+}
+
+// ProgressSnapshot is the read-only view passed to ScanOptions.Progress.
+type ProgressSnapshot struct {
+	Files     int64
+	Dirs      int64
+	Bytes     int64
+	Warnings  int64
+	Goroutines int    // runtime.NumGoroutine() at the time of snapshot
+	PID       int    // os.Getpid() — process identifier
+	Elapsed   time.Duration
 }
 
 // ScanResult is the aggregated output of a Scan invocation.
@@ -89,14 +110,53 @@ func NewScanner(opts ScanOptions) (*Scanner, error) {
 // at their next walkFn call.
 func (s *Scanner) Scan(ctx context.Context) (*ScanResult, error) {
 	g, gctx := errgroup.WithContext(ctx)
+
+	// Optional progress ticker — fires every ~250ms while the scan is in
+	// progress. We run it OUTSIDE the errgroup and stop it via a local
+	// done channel that we close right before returning. This avoids the
+	// infinite-loop-keeps-gctx-alive deadlock that occurs if the ticker
+	// is inside errgroup (gctx is only canceled when Wait returns).
+	progressDone := make(chan struct{})
+	if s.opts.Progress != nil {
+		go func() {
+			t := time.NewTicker(250 * time.Millisecond)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-progressDone:
+					return
+				case <-t.C:
+					s.warnMu.Lock()
+					wc := int64(len(s.warnings))
+					s.warnMu.Unlock()
+					s.opts.Progress(ProgressSnapshot{
+						Files:      s.fileCount.Load(),
+						Dirs:       s.dirCount.Load(),
+						Bytes:      s.bytes.Load(),
+						Warnings:   wc,
+						Goroutines: runtime.NumGoroutine(),
+						PID:        os.Getpid(),
+						Elapsed:    time.Since(s.startedAt),
+					})
+				}
+			}
+		}()
+	}
+
 	for _, root := range s.opts.Roots {
 		root := root
 		g.Go(func() error {
 			return s.walk(gctx, root, 0)
 		})
 	}
-	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		return nil, err
+
+	scanErr := g.Wait()
+	// Signal the progress goroutine to exit. Safe even if it was never started.
+	close(progressDone)
+	if scanErr != nil && !errors.Is(scanErr, context.Canceled) {
+		return nil, scanErr
 	}
 	return s.result(), nil
 }

@@ -89,6 +89,7 @@ type ScanOpts struct {
 	ColdMode     string // off | report | warn
 	Interactive  string // auto | true | false
 	AllowMark    bool
+	Progress     bool   // show live progress to stderr
 }
 
 // RunScan is the main entry for the `scan` sub-command.
@@ -128,6 +129,9 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 		PrivacyRedact:      r.cfg.PrivacyRedact,
 		PrivacyRedactPaths: r.cfg.PrivacyRedactPaths,
 	}
+	if opts.Progress {
+		scanOpts.Progress = renderProgressToStderr
+	}
 	scanner, err := svc.NewScanner(scanOpts)
 	if err != nil {
 		return fmt.Errorf("scan: new scanner: %w", err)
@@ -143,6 +147,11 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 		"warnings", len(scanResult.Warnings),
 		"duration", scanResult.Duration,
 	)
+	// If progress mode was on, terminate the carriage-return line so the
+	// final summary and subsequent sections render on their own lines.
+	if opts.Progress {
+		fmt.Fprintln(os.Stderr)
+	}
 
 	// Step 2: collector + cache write.
 	// Persist each scanner entry to the DB so report builders can read them back.
@@ -311,6 +320,22 @@ func (r *Runner) LatestDate() (string, error) {
 // Exposed so cmd/tui.go can load the raw rows for tree rendering.
 func (r *Runner) ReadDate(date string) ([]svc.EntryRow, error) {
 	return r.db.EntriesForDate(date)
+}
+
+// renderProgressToStderr writes a one-line progress snapshot to stderr with a
+// carriage return so subsequent updates overwrite the same line. ANSI escapes
+// are used minimally — non-TTY stderr will just show stale-line churn, which
+// is acceptable for a CLI tool.
+//
+// Format:
+//
+//   [disk-analyzer pid=12345]  1234 files · 234 dirs · 12.3 MB scanned · 5 warnings · 8 goroutines · 1.2s elapsed
+func renderProgressToStderr(snap svc.ProgressSnapshot) {
+	const clear = "\x1b[K"
+	line := fmt.Sprintf("\r[disk-analyzer pid=%d]  %d files · %d dirs · %s scanned · %d warnings · %d goroutines · %s elapsed%s",
+		snap.PID, snap.Files, snap.Dirs, svc.FormatBytes(snap.Bytes),
+		snap.Warnings, snap.Goroutines, snap.Elapsed.Round(time.Millisecond), clear)
+	fmt.Fprint(os.Stderr, line)
 }
 
 // rowsToEntries converts DB rows back into the Entry type used in collectors.

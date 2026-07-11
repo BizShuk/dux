@@ -31,6 +31,7 @@ var (
 	scanColdMode      string
 	scanInteractive   string
 	scanAllowMark     bool
+	scanProgress      bool
 )
 
 var ScanCmd = &cobra.Command{
@@ -69,6 +70,7 @@ var ScanCmd = &cobra.Command{
 			ColdMode:      scanColdMode,
 			Interactive:   resolveInteractive(scanInteractive),
 			AllowMark:     scanAllowMark,
+			Progress:      scanProgress,
 		}
 		return r.RunScan(ctx, opts)
 	},
@@ -112,6 +114,8 @@ func init() {
 		"TUI mode: auto | true | false")
 	ScanCmd.Flags().BoolVar(&scanAllowMark, "allow-mark", false,
 		"enable mark/unmark keys in TUI")
+	ScanCmd.Flags().BoolVarP(&scanProgress, "progress", "p", false,
+		"show live progress to stderr (counts files/dirs/bytes as they are scanned)")
 
 	if err := ScanCmd.MarkFlagFilename(""); err != nil {
 		// No-op: just to demonstrate Cobra flag API parity.

@@ -1,4 +1,4 @@
-module github.com/bizshuk/disk-analyzer
+module github.com/bizshuk/dux
 
 go 1.26.0
 

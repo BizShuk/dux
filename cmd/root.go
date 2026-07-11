@@ -1,4 +1,4 @@
-// Package cmd wires cobra commands for disk-analyzer.
+// Package cmd wires cobra commands for dux.
 //
 // Each file declares a var XxxCmd = &cobra.Command{...} and registers itself
 // in init() with RootCmd.AddCommand(...). This mirrors the file_watcher
@@ -13,9 +13,9 @@ import (
 )
 
 var RootCmd = &cobra.Command{
-	Use:   "disk-analyzer",
+	Use:   "dux",
 	Short: "High-performance disk usage analyzer with TUI + observability",
-	Long: `disk-analyzer — single-shot disk analysis with concurrent scanning,
+	Long: `dux — single-shot disk analysis with concurrent scanning,
 incremental caching, duplicate detection, cold-data identification, and CSV export.
 
 Use 'scan' for a full scan, 'show' to view a past scan, 'diff' to compare
@@ -34,9 +34,9 @@ var version = "dev"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print disk-analyzer version",
+	Short: "Print dux version",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("disk-analyzer %s\n", version)
+		fmt.Printf("dux %s\n", version)
 		return nil
 	},
 }

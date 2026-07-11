@@ -1,11 +1,12 @@
-// disk-analyzer — high-performance disk usage analyzer.
+// dux — high-performance disk usage analyzer.
 //
 // Single-shot CLI driven by cobra sub-commands:
-//   scan    perform a full scan + write CSV/DB + emit metrics
-//   show    display a past scan
-//   diff    compare two scans
-//   tui     launch the interactive tree browser
-//   version print version
+//
+//	scan    perform a full scan + write CSV/DB + emit metrics
+//	show    display a past scan
+//	diff    compare two scans
+//	tui     launch the interactive tree browser
+//	version print version
 //
 // Architecture follows the file_watcher convention:
 //   - config.Default() bootstraps gosdk settings
@@ -16,8 +17,8 @@
 package main
 
 import (
-	"github.com/bizshuk/disk-analyzer/cmd"
-	"github.com/bizshuk/disk-analyzer/config"
+	"github.com/bizshuk/dux/cmd"
+	"github.com/bizshuk/dux/config"
 )
 
 func main() {

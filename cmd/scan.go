@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bizshuk/disk-analyzer/config"
-	"github.com/bizshuk/disk-analyzer/du"
-	"github.com/bizshuk/disk-analyzer/svc"
+	"github.com/bizshuk/dux/config"
+	"github.com/bizshuk/dux/du"
+	"github.com/bizshuk/dux/svc"
 
 	"github.com/spf13/cobra"
 )
@@ -39,7 +39,7 @@ the configured CSV directory. The CSV uses the v2 schema:
 
   path,is_dir,depth,size,change_size,is_duplicate,last_accessed,category
 
-so it can be ingested by spreadsheets, scripts, or the disk-analyzer
+so it can be ingested by spreadsheets, scripts, or the dux
 ` + "`show`" + `, ` + "`diff`" + `, and ` + "`tui`" + ` sub-commands.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -82,7 +82,7 @@ so it can be ingested by spreadsheets, scripts, or the disk-analyzer
 			}
 			threshold = v
 		}
-		_ = scanTop // reserved for a future breakdown top-N display; ignored for now
+		_ = scanTop      // reserved for a future breakdown top-N display; ignored for now
 		_ = scanProgress // reserved; future PR will wire a live counter
 
 		// Merge excludes: config provides persistent baseline, CLI appends.
@@ -97,9 +97,9 @@ so it can be ingested by spreadsheets, scripts, or the disk-analyzer
 
 		duOpts := du.Options{
 			Paths:       []string{home},
-			AllFiles:    true,             // emit both files and directories
-			Threshold:   threshold,        // positive value → exclude entries smaller than this
-			MaxDepth:    math.MaxInt,      // -1 in du.Options = unlimited; 0 would mean "summarize only"
+			AllFiles:    true,        // emit both files and directories
+			Threshold:   threshold,   // positive value → exclude entries smaller than this
+			MaxDepth:    math.MaxInt, // -1 in du.Options = unlimited; 0 would mean "summarize only"
 			Excludes:    mergedExcludes,
 			ExcludeFrom: excludeFrom,
 		}

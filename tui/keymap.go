@@ -2,7 +2,7 @@ package tui
 
 import "strings"
 
-// KeyMap defines all key bindings for the disk-analyzer TUI.
+// KeyMap defines all key bindings for the dux TUI.
 //
 // We deliberately do NOT import github.com/charmbracelet/bubbletea/key because
 // in recent bubbletea versions the `key` subpackage is its own module and adds

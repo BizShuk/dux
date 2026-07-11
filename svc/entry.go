@@ -1,4 +1,4 @@
-// Package svc contains the domain types and operations for disk-analyzer.
+// Package svc contains the domain types and operations for dux.
 //
 // Files in this package:
 //   - entry.go:        data types (Entry / ReportEntry / DuplicateGroup / ReportSection)
@@ -14,28 +14,28 @@ import "time"
 // entry (file or directory). Mirrors file_watcher's svc.Entry shape so the
 // report layer can share comparison logic.
 type Entry struct {
-	Path          string    `json:"path"`           // absolute or normalized
-	Size          int64     `json:"size"`           // bytes (file size for files, sum of children for dirs)
-	LastModified  time.Time `json:"last_modified"`  // mtime
-	LastAccessed  time.Time `json:"last_accessed"`  // atime (zero if unavailable — Linux noatime)
-	IsDir         bool      `json:"is_dir"`
-	IsSymlink     bool      `json:"is_symlink"`
-	IsHardlink    bool      `json:"is_hardlink"`  // nlink > 1
-	Inode         uint64    `json:"inode"`        // for hardlink grouping
-	Depth         int       `json:"depth"`        // depth from scan root
+	Path         string    `json:"path"`          // absolute or normalized
+	Size         int64     `json:"size"`          // bytes (file size for files, sum of children for dirs)
+	LastModified time.Time `json:"last_modified"` // mtime
+	LastAccessed time.Time `json:"last_accessed"` // atime (zero if unavailable — Linux noatime)
+	IsDir        bool      `json:"is_dir"`
+	IsSymlink    bool      `json:"is_symlink"`
+	IsHardlink   bool      `json:"is_hardlink"` // nlink > 1
+	Inode        uint64    `json:"inode"`       // for hardlink grouping
+	Depth        int       `json:"depth"`       // depth from scan root
 }
 
 // ReportEntry is the enriched row printed in a ReportSection.
 // It includes the diff against the historical baseline and the categorization.
 type ReportEntry struct {
 	Path         string    `json:"path"`
-	IsDir        bool      `json:"is_dir"`        // directory vs file; needed by TUI tree builder
+	IsDir        bool      `json:"is_dir"` // directory vs file; needed by TUI tree builder
 	Size         int64     `json:"size"`
-	ChangeSize   int64     `json:"change_size"`  // current.size - prev.size; 0 if no baseline
+	ChangeSize   int64     `json:"change_size"` // current.size - prev.size; 0 if no baseline
 	IsDuplicate  bool      `json:"is_duplicate"`
 	LastAccessed time.Time `json:"last_accessed"`
-	Category     string    `json:"category"`     // media / archive / code / vm / other
-	Depth        int       `json:"depth"`        // distance from scan root (0 = root itself)
+	Category     string    `json:"category"` // media / archive / code / vm / other
+	Depth        int       `json:"depth"`    // distance from scan root (0 = root itself)
 }
 
 // DuplicateGroup is a cluster of paths that share the same content hash

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bizshuk/disk-analyzer/svc"
+	"github.com/bizshuk/dux/svc"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -22,11 +22,11 @@ import (
 // and the tree only carries items the user cares about.
 // Building the tree is purely a path-prefix exercise — no filesystem I/O.
 type treeNode struct {
-	path     string      // absolute path; the unique node key
-	name     string      // filepath.Base(path) for display
+	path     string // absolute path; the unique node key
+	name     string // filepath.Base(path) for display
 	isDir    bool
 	size     int64
-	depth    int       // path-component depth from a virtual root (0 for the top-level roots)
+	depth    int // path-component depth from a virtual root (0 for the top-level roots)
 	parent   *treeNode
 	children []*treeNode // sorted by size desc, tie-break path asc
 }
@@ -35,12 +35,12 @@ type treeNode struct {
 // current expansion state. flat []treeItem is what View() iterates.
 type treeItem struct {
 	node        *treeNode
-	depth       int  // visual indentation depth
+	depth       int // visual indentation depth
 	hasChildren bool
 	expanded    bool // only meaningful for directories; mirrors m.expanded[node.path]
 }
 
-// Model is the bubbletea model for the disk-analyzer TUI.
+// Model is the bubbletea model for the dux TUI.
 //
 // State machine:
 //   - rows:      the immutable raw data from the DB

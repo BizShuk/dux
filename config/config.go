@@ -1,4 +1,4 @@
-// Package config loads disk-analyzer settings from gosdk + default_settings.json
+// Package config loads dux settings from gosdk + default_settings.json
 // and exposes the few fields the remaining sub-commands actually need.
 //
 // After the SQLite removal (2026-07-12), the surviving sub-commands
@@ -28,7 +28,7 @@ import (
 //go:embed default_settings.json
 var defaultSettingsJSON string
 
-// Settings is the runtime configuration for disk-analyzer.
+// Settings is the runtime configuration for dux.
 // Fields tagged with `json:"-"` are populated at validate() time from
 // gosdk paths and must not be set in the user-facing settings.json.
 type Settings struct {

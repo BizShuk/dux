@@ -1,11 +1,11 @@
 # CLAUDE.md
 
-技術脈絡 (technical context) for the disk-analyzer Go CLI。
+技術脈絡 (technical context) for the dux Go CLI。
 
 ## 模組與分層
 
 ```
-disk-analyzer/
+dux/
 ├── main.go                  # entrypoint (config.Default + cmd.Execute)
 ├── config/                  # gosdk config 整合 + Settings struct
 ├── cmd/                     # cobra sub-commands (scan / show / diff / tui / version)
@@ -34,7 +34,7 @@ disk-analyzer/
 2. **CSV 為主、DB 為輔**：scan 只產 CSV（`~/.config/<app>/data/YYYY-MM-DD.csv`）；
    `history.db` 殘留供舊版資料查詢，**新 scan 不再寫 DB**
 3. **CSV schema 穩定**：`path, size, change_size, is_duplicate, last_accessed, category`
-   + section comment `# <name>`，Excel 友善（BOM）
+    - section comment `# <name>`，Excel 友善（BOM）
 4. **隱私預設開啟**：`privacy_redact_paths` 黑名單；`tui` 顯示為 `<redacted>`
 5. **不做 hard delete**：TUI 只能 mark
 6. **Symbol MixedCaps**；const SCREAMING_SNAKE_CASE（gosdk 慣例）
@@ -51,7 +51,7 @@ disk-analyzer/
 
 ## gosdk 整合
 
-- `config.Default(WithAppName("disk-analyzer"))` — 設定載入 + 自動建立 `~/.config/disk-analyzer/`
+- `config.Default(WithAppName("dux"))` — 設定載入 + 自動建立 `~/.config/dux/`
 - `db.InitSQLite()` — singleton；`SQLITE_PATH` 在 `config.Default()` 之後用 `viper.Set` 設定
 - `log` 是 `log/slog` 標準介面，env `LOG_LEVEL` / `LOG_FORMAT` 控制
 
@@ -76,18 +76,18 @@ max_retries: 0,
 ## 開發
 
 ```bash
-go build -o bin/disk-analyzer .            # 編譯到 ./bin/
+go build -o bin/dux .            # 編譯到 ./bin/
 go test ./...                              # 跑單元測試
 go test -race ./...                        # 含 race detector
-go build -o ~/.local/bin/disk-analyzer .   # 安裝到 PATH（需 ~/.local/bin 在 $PATH）
-./run.sh                                   # symlink ~/.config/disk-analyzer ./tmp/
+go build -o ~/.local/bin/dux .   # 安裝到 PATH（需 ~/.local/bin 在 $PATH）
+./run.sh                                   # symlink ~/.config/dux ./tmp/
 ```
 
 > 專案**不**提供 Makefile；2026-07-12 由排程驗證時補上的決定。
 
 ## 規格與計畫
 
-- 設計規格：`docs/spec/2026-07-11-disk-analyzer-design.md`（部分章節已被實際實作超越；見檔首「Superseded」標註）
+- 設計規格：`docs/spec/2026-07-11-dux-design.md`（部分章節已被實際實作超越；見檔首「Superseded」標註）
 - 部署範本：`docs/daemon.md`（pm2 + launchd + systemd）
 - 隱私策略：`docs/privacy.md`
 

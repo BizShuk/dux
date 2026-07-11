@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bizshuk/disk-analyzer/svc"
+	"github.com/bizshuk/dux/svc"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -42,7 +42,7 @@ func (m *Model) renderList() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(m.styles.Title.Render(" disk-analyzer — TUI ") + "\n")
+	sb.WriteString(m.styles.Title.Render(" dux — TUI ") + "\n")
 	sb.WriteString(m.styles.Section.Render(
 		"  ↑/↓ navigate • →/← fold • e expand all • c collapse • enter trash (y confirm) • ?: help • q: quit") + "\n\n")
 
@@ -95,7 +95,7 @@ func (m *Model) renderList() string {
 
 // renderRow renders one treeItem. Layout:
 //
-//   [indent][fold][name...]   [size]
+//	[indent][fold][name...]   [size]
 //
 // indent = 2 spaces * depth
 // fold   = ▼ / ▶ / · / space

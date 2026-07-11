@@ -1,4 +1,4 @@
-// Package handler is the façade for disk-analyzer sub-commands that need
+// Package handler is the façade for dux sub-commands that need
 // cross-cutting settings (show / diff / tui). After the SQLite removal,
 // Runner no longer holds long-lived state — every method either reads a
 // CSV file or transforms an in-memory slice.
@@ -15,8 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bizshuk/disk-analyzer/config"
-	"github.com/bizshuk/disk-analyzer/svc"
+	"github.com/bizshuk/dux/config"
+	"github.com/bizshuk/dux/svc"
 )
 
 // Runner is the façade for show / diff / tui. One Runner per command

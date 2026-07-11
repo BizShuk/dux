@@ -1,4 +1,4 @@
-// ecosystem.config.js — pm2 configuration for disk-analyzer.
+// ecosystem.config.js — pm2 configuration for dux.
 //
 // Mirror stock/ecosystem.config.js conventions:
 //   - cron_restart + autorestart:false + max_retries:0 = one-shot scheduled task
@@ -11,9 +11,9 @@
 module.exports = {
     apps: [
         {
-            name: "disk-analyzer-daily",
+            name: "dux-daily",
             namespace: "Local",
-            script: "disk-analyzer",
+            script: "dux",
             args: ["scan"],
             cron: "0 6 * * *"
         }

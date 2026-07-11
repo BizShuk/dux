@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bizshuk/disk-analyzer/handler"
+	"github.com/bizshuk/dux/handler"
 
 	"github.com/spf13/cobra"
 )

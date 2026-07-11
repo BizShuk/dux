@@ -116,7 +116,7 @@ func TestLatestDate_EmptyDir(t *testing.T) {
 }
 
 func TestLatestDate_MissingDir(t *testing.T) {
-	d, err := LatestDate("/tmp/does-not-exist-disk-analyzer-csv-test")
+	d, err := LatestDate("/tmp/does-not-exist-dux-csv-test")
 	if d != "" {
 		t.Errorf("missing dir should return empty date, got %q", d)
 	}
@@ -126,7 +126,7 @@ func TestLatestDate_MissingDir(t *testing.T) {
 }
 
 func TestAvailableDates_MissingDir(t *testing.T) {
-	got, err := AvailableDates("/tmp/does-not-exist-disk-analyzer-csv-test")
+	got, err := AvailableDates("/tmp/does-not-exist-dux-csv-test")
 	if err != nil {
 		t.Errorf("AvailableDates missing dir should return nil error, got %v", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bizshuk/disk-analyzer/svc"
+	"github.com/bizshuk/dux/svc"
 )
 
 func mkRow(path string, isDir bool, size int64, depth int) svc.EntryRow {

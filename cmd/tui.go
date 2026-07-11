@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bizshuk/disk-analyzer/config"
-	"github.com/bizshuk/disk-analyzer/handler"
-	"github.com/bizshuk/disk-analyzer/svc"
-	"github.com/bizshuk/disk-analyzer/tui"
+	"github.com/bizshuk/dux/config"
+	"github.com/bizshuk/dux/handler"
+	"github.com/bizshuk/dux/svc"
+	"github.com/bizshuk/dux/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"

@@ -33,8 +33,8 @@ go.work.sum
 
 # Local symlink to config
 tmp/
-disk-analyzer
-disk-analyzer-*
+dux
+dux-*
 
 # Build artifacts
 bin/

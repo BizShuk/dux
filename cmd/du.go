@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/bizshuk/disk-analyzer/du"
+	"github.com/bizshuk/dux/du"
 	"github.com/spf13/cobra"
 )
 
@@ -50,16 +50,16 @@ disk-blocks sizing, and all major filtering options.`,
 		}()
 
 		opts := du.Options{
-			Paths:        args,
-			AllFiles:     duAllFiles,
-			ApparentSize: duApparent || duBytes,
-			MaxDepth:     duMaxDepth,
-			Threshold:    duThreshold,
-			SeparateDirs: duSeparateDirs,
+			Paths:         args,
+			AllFiles:      duAllFiles,
+			ApparentSize:  duApparent || duBytes,
+			MaxDepth:      duMaxDepth,
+			Threshold:     duThreshold,
+			SeparateDirs:  duSeparateDirs,
 			OneFileSystem: duOneFS,
-			CountLinks:   duCountLinks,
-			Excludes:     duExcludes,
-			ExcludeFrom:  duExcludeFrom,
+			CountLinks:    duCountLinks,
+			Excludes:      duExcludes,
+			ExcludeFrom:   duExcludeFrom,
 		}
 
 		// -b = --apparent-size --block-size=1 (bytes mode).

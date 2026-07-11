@@ -249,6 +249,13 @@ func (s *Scanner) walk(ctx context.Context, root string, depth int) error {
 			}
 			return nil
 		}
+		// Competing-root dedup: if this directory IS one of the other roots
+		// configured for this scan (e.g. scanning "/" and we hit "$HOME"),
+		// skip it so it is only counted once (under its own walk).
+		if d.IsDir() && s.isCompetingRoot(p, root) {
+			s.addWarning(fmt.Sprintf("skipping competing root: %s (scanned separately)", p))
+			return fs.SkipDir
+		}
 		// Honor context cancellation cooperatively.
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -335,6 +342,22 @@ func (s *Scanner) shouldExclude(name string) bool {
 // a directory by checking cache) can reuse the same exclusion logic.
 func (s *Scanner) ShouldExclude(name string) bool {
 	return s.shouldExclude(name)
+}
+
+// isCompetingRoot reports whether path `p` is one of the OTHER scan roots
+// (not the one we are currently walking). Used to prevent double-counting
+// when the user configures overlapping roots such as ["/", "$HOME"].
+func (s *Scanner) isCompetingRoot(p, currentRoot string) bool {
+	cleanP := filepath.Clean(p)
+	for _, r := range s.opts.Roots {
+		if r == currentRoot {
+			continue
+		}
+		if filepath.Clean(r) == cleanP {
+			return true
+		}
+	}
+	return false
 }
 
 func toLowerAll(in []string) []string {

@@ -1,17 +1,17 @@
 {
-    "roots": ["/", "$HOME"],
     "exclude_list": [
         "node_modules", ".git", ".venv", "venv", ".cache",
         ".tox", ".pytest_cache", "DerivedData",
         "Library/Caches", "Library/Developer",
-        "System/Volumes/Data", ".Trash", "tmp", ".tmp", "__pycache__"
+        "System/Volumes/Data", ".Trash", "tmp", ".tmp", "__pycache__",
+        "dev", "proc", "sys"
     ],
     "privacy_redact_paths": [
         ".ssh", ".gnupg", ".aws", ".kube", ".docker",
         "Library/Keychains", "Library/Application Support/Keybase",
         ".config/gh/hosts.yml"
     ],
-    "workers": 0,
+    "workers": 5,
     "breakdown_threshold": "200MB",
     "cold_size_threshold": "100MB",
     "cold_age_days": 180,

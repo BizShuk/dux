@@ -33,9 +33,7 @@ func TestParseSize(t *testing.T) {
 }
 
 func TestSettings_Defaults(t *testing.T) {
-	s := &Settings{
-		Roots: []string{"/tmp"},
-	}
+	s := &Settings{}
 	if err := s.validate(); err != nil {
 		// validate needs gosdk paths; it will fail outside Default().
 		// So this is just testing the field-level fallbacks.
@@ -57,16 +55,23 @@ func TestSettings_Defaults(t *testing.T) {
 	}
 }
 
-func TestSettings_EmptyRootsRejected(t *testing.T) {
+func TestSettings_DefaultRootsWhenEmpty(t *testing.T) {
 	s := &Settings{}
-	if err := s.validate(); err == nil {
-		t.Error("expected error for empty roots, got nil")
+	_ = s.validate()
+	if len(s.Roots) != 2 {
+		t.Fatalf("expected Roots to default to 2 entries, got %d", len(s.Roots))
+	}
+	if s.Roots[0] != "/" {
+		t.Errorf("expected first root to be /, got %q", s.Roots[0])
+	}
+	// Second root should have ~ expanded to home.
+	if s.Roots[1] == "$HOME" {
+		t.Error("expected $HOME to be expanded in Roots[1]")
 	}
 }
 
 func TestSettings_InvalidInteractiveMode(t *testing.T) {
 	s := &Settings{
-		Roots:      []string{"/tmp"},
 		Interactive: "yes",
 	}
 	if err := s.validate(); err == nil {
@@ -75,7 +80,7 @@ func TestSettings_InvalidInteractiveMode(t *testing.T) {
 }
 
 func TestSettings_InteractiveAutoAccepted(t *testing.T) {
-	s := &Settings{Roots: []string{"/tmp"}, Interactive: "auto"}
+	s := &Settings{Interactive: "auto"}
 	_ = s.validate()
 	if s.Interactive != "auto" {
 		t.Errorf("expected Interactive=auto, got %q", s.Interactive)

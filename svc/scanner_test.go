@@ -169,3 +169,57 @@ func TestNewScanner_NoRoots(t *testing.T) {
 		t.Error("expected error for empty roots")
 	}
 }
+
+func TestScanner_CompetingRootDedup(t *testing.T) {
+	// Build a tree:
+	//   /tmp/disk-test-dedup/         <- outer root
+	//   /tmp/disk-test-dedup/inner/   <- competing root (scanned separately)
+	//   /tmp/disk-test-dedup/inner/x  <- should be skipped when scanning outer
+	outer := t.TempDir()
+	inner := t.TempDir() // separate dir under /tmp, will be referenced as absolute path
+
+	// Put a file under inner so we can detect it being scanned twice.
+	if err := os.WriteFile(filepath.Join(inner, "marker.txt"), []byte("X"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewScanner(ScanOptions{
+		Roots:   []string{outer, inner},
+		Workers: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewScanner: %v", err)
+	}
+	res, err := s.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	// Count how many times the inner marker appears in entries.
+	count := 0
+	for _, e := range res.Entries {
+		if filepath.Base(e.Path) == "marker.txt" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected marker.txt to appear exactly once (deduped across competing roots), got %d", count)
+	}
+}
+
+func TestScanner_NoDedup_WhenDistinctRoots(t *testing.T) {
+	// Roots that don't overlap should each be walked normally.
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dirA, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirB, "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := NewScanner(ScanOptions{Roots: []string{dirA, dirB}, Workers: 1})
+	res, _ := s.Scan(context.Background())
+	if len(res.Entries) < 4 { // at least 2 files + 2 dirs (each root emits itself)
+		t.Errorf("expected at least 4 entries, got %d", len(res.Entries))
+	}
+}

@@ -19,8 +19,11 @@ var defaultSettingsJSON string
 // Settings is the runtime configuration for disk-analyzer.
 // Fields tagged with `json:"-"` are populated at validate() time from
 // gosdk paths and must not be set in the user-facing settings.json.
+//
+// Note: Roots is intentionally NOT exposed in settings.json — disk-analyzer
+// always scans ["/", "$HOME"] by default. Use the --roots CLI flag to
+// override for ad-hoc testing.
 type Settings struct {
-	Roots              []string `json:"roots"`
 	ExcludeList        []string `json:"exclude_list"`
 	PrivacyRedactPaths []string `json:"privacy_redact_paths"`
 	Workers            int      `json:"workers"`
@@ -33,6 +36,12 @@ type Settings struct {
 	PrivacyRedact      bool     `json:"privacy_redact"`
 	FollowSymlinks     bool     `json:"follow_symlinks"`
 	Interactive        string   `json:"interactive"` // "auto" / "true" / "false"
+
+	// Roots is filled by validate() to ["/", "$HOME"] by default. Overridable
+	// at runtime via the --roots CLI flag for testing. Not in settings.json
+	// because the two default roots rely on the scanner's competing-root
+	// dedup logic which assumes ["/", "$HOME"] specifically.
+	Roots []string `json:"-"`
 
 	// Derived paths — populated by validate() from gosdk config paths.
 	SQLitePath string `json:"-"`
@@ -68,12 +77,15 @@ func Default() error {
 
 // validate enforces invariants and fills derived paths.
 // Validation failures return errors; missing optional fields get sane defaults.
+//
+// Roots is intentionally NOT configurable via settings.json: disk-analyzer
+// always scans ["/", "$HOME"] by default. This invariant guarantees that the
+// two default roots can dedup against each other (the scanner skips $HOME
+// when walking / to avoid double-counting). Use the --roots CLI flag to
+// override for testing only.
 func (s *Settings) validate() error {
-	if s.Roots == nil {
-		return errors.New("missing roots")
-	}
 	if len(s.Roots) == 0 {
-		return errors.New("empty roots")
+		s.Roots = []string{"/", "$HOME"}
 	}
 	for _, r := range s.Roots {
 		if r == "" {
@@ -132,18 +144,29 @@ func (s *Settings) validate() error {
 	return nil
 }
 
-// ExpandRoots replaces "~" with $HOME in each root path.
-// Mutates in place; mirrors config/config.go ExpandPaths in file_watcher.
+// ExpandRoots replaces "~" and "$HOME" with the user's home directory in each
+// root path. Mutates in place.
 func (s *Settings) ExpandRoots() {
 	for i, r := range s.Roots {
-		s.Roots[i] = config.ExpandHome(r)
+		s.Roots[i] = expandHomeOrEnv(r)
 	}
 	for i, p := range s.PrivacyRedactPaths {
-		s.PrivacyRedactPaths[i] = config.ExpandHome(p)
+		s.PrivacyRedactPaths[i] = expandHomeOrEnv(p)
 	}
 	for i, p := range s.ExcludeList {
-		s.ExcludeList[i] = config.ExpandHome(p)
+		s.ExcludeList[i] = expandHomeOrEnv(p)
 	}
+}
+
+// expandHomeOrEnv handles both "~" / "~/..." and "$HOME" / "${HOME}" syntax.
+// gosdk's ExpandHome only handles "~", so we layer os.ExpandEnv on top.
+func expandHomeOrEnv(p string) string {
+	expanded := os.ExpandEnv(p)
+	if expanded == p {
+		// No env var expansion happened; still try "~".
+		expanded = config.ExpandHome(p)
+	}
+	return expanded
 }
 
 // BreakdownThresholdBytes parses BreakdownThreshold as a size string

@@ -12,6 +12,7 @@ import (
 	"github.com/bizshuk/disk-analyzer/config"
 	"github.com/bizshuk/disk-analyzer/svc"
 
+	sdkcfg "github.com/bizshuk/gosdk/config"
 	"github.com/bizshuk/gosdk/metric"
 )
 
@@ -60,6 +61,19 @@ func (r *Runner) Close() {
 	if err := r.db.Close(); err != nil {
 		slog.Warn("runner: db close failed", "err", err)
 	}
+}
+
+// SetRoots overrides cfg.Roots with the given paths (post-`~` expansion).
+// Used by `scan --roots` to override settings.json at runtime.
+func (r *Runner) SetRoots(paths []string) {
+	if r == nil || r.cfg == nil {
+		return
+	}
+	expanded := make([]string, 0, len(paths))
+	for _, p := range paths {
+		expanded = append(expanded, sdkcfg.ExpandHome(p))
+	}
+	r.cfg.Roots = expanded
 }
 
 // ScanOpts configures RunScan.

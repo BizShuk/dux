@@ -19,17 +19,18 @@ import (
 // Flag vars for `scan`. Declared at package scope so sub-commands can reuse
 // them without coercion.
 var (
-	scanDate         string
-	scanIncremental  bool
-	scanWorkers      int
-	scanExclude      string
+	scanDate          string
+	scanRoots         []string
+	scanIncremental   bool
+	scanWorkers       int
+	scanExclude       string
 	scanExcludeAppend string
-	scanExcludeReset bool
-	scanTopN         int
-	scanMinSize      string
-	scanColdMode     string
-	scanInteractive  string
-	scanAllowMark    bool
+	scanExcludeReset  bool
+	scanTopN          int
+	scanMinSize       string
+	scanColdMode      string
+	scanInteractive   string
+	scanAllowMark     bool
 )
 
 var ScanCmd = &cobra.Command{
@@ -50,6 +51,11 @@ var ScanCmd = &cobra.Command{
 			return fmt.Errorf("scan: wire: %w", err)
 		}
 		defer r.Close()
+
+		// Apply CLI --roots override (replaces settings.json roots entirely).
+		if len(scanRoots) > 0 {
+			r.SetRoots(scanRoots)
+		}
 
 		opts := handler.ScanOpts{
 			Date:          scanDate,
@@ -88,6 +94,8 @@ func resolveInteractive(arg string) string {
 func init() {
 	RootCmd.AddCommand(ScanCmd)
 	ScanCmd.Flags().StringVar(&scanDate, "date", "", "scan date (YYYY-MM-DD, default: today)")
+	ScanCmd.Flags().StringSliceVar(&scanRoots, "roots", nil,
+		"comma-separated paths to scan (overrides settings.json roots)")
 	ScanCmd.Flags().BoolVar(&scanIncremental, "incremental", true, "use mtime-aware cache")
 	ScanCmd.Flags().IntVar(&scanWorkers, "workers", 0, "max concurrent workers (default: NumCPU/2)")
 	ScanCmd.Flags().StringVar(&scanExclude, "exclude", "",
@@ -105,7 +113,6 @@ func init() {
 	ScanCmd.Flags().BoolVar(&scanAllowMark, "allow-mark", false,
 		"enable mark/unmark keys in TUI")
 
-	// Validate flag relationships.
 	if err := ScanCmd.MarkFlagFilename(""); err != nil {
 		// No-op: just to demonstrate Cobra flag API parity.
 	}

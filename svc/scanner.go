@@ -12,10 +12,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 // ScanOptions configures a single Scan invocation.
@@ -34,6 +34,13 @@ type ScanOptions struct {
 	PrivacyRedactPaths   []string
 	PrivacyRedactAllPaths bool // if true, paths are not recorded at all (size only)
 
+	// UseApparentSize: if true, report each file's logical size (info.Size())
+	// instead of its on-disk allocation. Default (false) matches `du` behavior
+	// and prevents sparse files like VM disk images (OrbStack .img.raw,
+	// Docker raw, qcow2, vdi, sparsebundle) from inflating parent directory
+	// totals by 50x or more.
+	UseApparentSize bool
+
 	// Progress, if non-nil, is invoked periodically during the scan with
 	// snapshot counters. Caller is responsible for thread-safety of any state
 	// inside Progress; it runs in the scanner's internal goroutine.
@@ -42,6 +49,10 @@ type ScanOptions struct {
 	// because it runs every ~250ms. For UI rendering, prefer writing to a
 	// channel that a dedicated goroutine drains.
 	Progress func(snapshot ProgressSnapshot)
+
+	// OnEntry is called for every file and directory discovered.
+	// If it returns an error, the scan is aborted.
+	OnEntry func(Entry) error
 }
 
 // ProgressSnapshot is the read-only view passed to ScanOptions.Progress.
@@ -53,11 +64,15 @@ type ProgressSnapshot struct {
 	Goroutines int    // runtime.NumGoroutine() at the time of snapshot
 	PID       int    // os.Getpid() — process identifier
 	Elapsed   time.Duration
+	// CurrentPath is the directory most recently picked up by a worker.
+	// With multiple workers running in parallel, this is a best-effort
+	// "where are we now" hint rather than a strict single-thread trace.
+	// Empty before the first processDir call.
+	CurrentPath string
 }
 
 // ScanResult is the aggregated output of a Scan invocation.
 type ScanResult struct {
-	Entries      []Entry
 	Warnings     []string
 	FileCount    int64
 	DirCount     int64
@@ -74,16 +89,39 @@ type Scanner struct {
 	opts         ScanOptions
 	warnMu       sync.Mutex
 	warnings     []string
-	entriesMu    sync.Mutex
-	entries      []Entry
 	fileCount    atomic.Int64
 	dirCount     atomic.Int64
 	bytes        atomic.Int64
 	cacheHits    atomic.Int64
-	sem          *semaphore.Weighted
 	excludeLower []string // pre-lowercased exclude patterns
 	privacyLower []string // pre-lowercased privacy patterns
 	startedAt    time.Time
+	dirMap       sync.Map // path -> *Entry
+	// currentPath is the directory most recently picked up by a worker.
+	// Workers Store() their path before processing; readers (progress
+	// ticker) Load() it. atomic.Pointer gives race-free last-writer-wins.
+	currentPath atomic.Pointer[string]
+}
+
+// bubbleUpSize adds size to all parent directories currently in dirMap.
+func (s *Scanner) bubbleUpSize(path string, size int64) {
+	if size == 0 {
+		return
+	}
+	dir := filepath.Dir(path)
+	for {
+		if v, ok := s.dirMap.Load(dir); ok {
+			atomic.AddInt64(&v.(*Entry).Size, size)
+		}
+		if dir == "/" || dir == "." || dir == "" {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
 }
 
 // NewScanner constructs a Scanner from opts. It does not start the scan;
@@ -95,21 +133,37 @@ func NewScanner(opts ScanOptions) (*Scanner, error) {
 	if opts.Workers <= 0 {
 		opts.Workers = 4
 	}
+	if opts.Workers > 5 {
+		opts.Workers = 5
+	}
 	s := &Scanner{
 		opts:         opts,
 		excludeLower: toLowerAll(opts.ExcludeList),
 		privacyLower: toLowerAll(opts.PrivacyRedactPaths),
-		sem:          semaphore.NewWeighted(int64(opts.Workers)),
 		startedAt:    time.Now(),
 	}
 	return s, nil
 }
 
-// Scan walks every configured root concurrently and returns the aggregated
-// result. Cancellation is honored via ctx; in-flight workers will wrap up
-// at their next walkFn call.
+// Scan walks every configured root concurrently using a parallel BFS queue and returns the aggregated
+// result. Cancellation is honored via ctx.
 func (s *Scanner) Scan(ctx context.Context) (*ScanResult, error) {
-	g, gctx := errgroup.WithContext(ctx)
+	q := newBFSQueue()
+
+	// Feed initial roots.
+	for _, root := range s.opts.Roots {
+		q.Push(queueItem{
+			path:     root,
+			depth:    0,
+			origRoot: root,
+		})
+	}
+
+	// Watch for context cancellation to close the queue.
+	go func() {
+		<-ctx.Done()
+		q.Close()
+	}()
 
 	// Optional progress ticker — fires every ~250ms while the scan is in
 	// progress. We run it OUTSIDE the errgroup and stop it via a local
@@ -131,32 +185,67 @@ func (s *Scanner) Scan(ctx context.Context) (*ScanResult, error) {
 					s.warnMu.Lock()
 					wc := int64(len(s.warnings))
 					s.warnMu.Unlock()
+					var cp string
+					if p := s.currentPath.Load(); p != nil {
+						cp = *p
+					}
 					s.opts.Progress(ProgressSnapshot{
-						Files:      s.fileCount.Load(),
-						Dirs:       s.dirCount.Load(),
-						Bytes:      s.bytes.Load(),
-						Warnings:   wc,
-						Goroutines: runtime.NumGoroutine(),
-						PID:        os.Getpid(),
-						Elapsed:    time.Since(s.startedAt),
+						Files:       s.fileCount.Load(),
+						Dirs:        s.dirCount.Load(),
+						Bytes:       s.bytes.Load(),
+						Warnings:    wc,
+						Goroutines:  runtime.NumGoroutine(),
+						PID:         os.Getpid(),
+						Elapsed:     time.Since(s.startedAt),
+						CurrentPath: cp,
 					})
 				}
 			}
 		}()
 	}
 
-	for _, root := range s.opts.Roots {
-		root := root
+	// Spawn worker goroutines.
+	g, gctx := errgroup.WithContext(ctx)
+	for i := 0; i < s.opts.Workers; i++ {
 		g.Go(func() error {
-			return s.walk(gctx, root, 0)
+			for {
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+				item, ok := q.Pop()
+				if !ok {
+					return nil
+				}
+				err := s.processDir(gctx, q, item)
+				q.Done()
+				if err != nil {
+					return err
+				}
+			}
 		})
 	}
 
 	scanErr := g.Wait()
+
+	var emitErr error
+	if scanErr == nil && s.opts.OnEntry != nil {
+		s.dirMap.Range(func(key, value any) bool {
+			e := value.(*Entry)
+			if err := s.opts.OnEntry(*e); err != nil {
+				emitErr = err
+				return false
+			}
+			return true
+		})
+	}
+
 	// Signal the progress goroutine to exit. Safe even if it was never started.
 	close(progressDone)
 	if scanErr != nil && !errors.Is(scanErr, context.Canceled) {
 		return nil, scanErr
+	}
+	if emitErr != nil {
+		return nil, emitErr
 	}
 	return s.result(), nil
 }
@@ -166,11 +255,7 @@ func (s *Scanner) result() *ScanResult {
 	s.warnMu.Lock()
 	warnings := append([]string(nil), s.warnings...)
 	s.warnMu.Unlock()
-	s.entriesMu.Lock()
-	entries := append([]Entry(nil), s.entries...)
-	s.entriesMu.Unlock()
 	return &ScanResult{
-		Entries:      entries,
 		Warnings:     warnings,
 		FileCount:    s.fileCount.Load(),
 		DirCount:     s.dirCount.Load(),
@@ -187,97 +272,104 @@ func (s *Scanner) addWarning(msg string) {
 	s.warnMu.Unlock()
 }
 
-// walk is the recursive walker for a single root. Uses filepath.WalkDir
-// which calls Lstat (so symlinks are NOT followed by default).
-func (s *Scanner) walk(ctx context.Context, root string, depth int) error {
-	// Acquire a semaphore slot for parallelism; release after walk completes.
-	if err := s.sem.Acquire(ctx, 1); err != nil {
-		return err
+// processDir reads a directory and emits its entries, pushing subdirectories into the BFS queue.
+func (s *Scanner) processDir(ctx context.Context, q *bfsQueue, item queueItem) error {
+	// Publish the path being processed so the progress ticker can show
+	// "where we are now". Last-writer-wins across workers is fine for a
+	// best-effort indicator; the value is just a UI hint.
+	if p := item.path; p != "" {
+		s.currentPath.Store(&p)
 	}
-	defer s.sem.Release(1)
 
-	// Verify root exists and is accessible.
-	rootInfo, err := os.Lstat(root)
+	// Verify directory exists and is accessible.
+	info, err := os.Lstat(item.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
-			s.addWarning(fmt.Sprintf("permission denied: %s", root))
-			return nil // skip silently, do not abort
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				s.addWarning(fmt.Sprintf("permission denied: %s", item.path))
+			}
+			return nil
 		}
 		if errors.Is(err, fs.ErrNotExist) {
-			s.addWarning(fmt.Sprintf("not found: %s", root))
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				s.addWarning(fmt.Sprintf("not found: %s", item.path))
+			}
 			return nil
 		}
 		return err
 	}
 
-	// Emit the root itself as an entry.
-	s.emit(ctx, root, rootInfo, depth)
+	// Emit the directory itself.
+	if err := s.emit(ctx, item.path, info, item.depth); err != nil {
+		return err
+	}
 
-	// If root is not a directory, we are done.
-	if !rootInfo.IsDir() {
+	// If MaxDepth reached, we do not traverse inside.
+	if s.opts.MaxDepth > 0 && item.depth >= s.opts.MaxDepth {
 		return nil
 	}
 
-	// Skip the rest if max depth reached.
-	if s.opts.MaxDepth > 0 && depth >= s.opts.MaxDepth {
+	// Read directory entries.
+	entries, err := os.ReadDir(item.path)
+	if err != nil {
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			s.addWarning(fmt.Sprintf("walk error at %s: %v", item.path, err))
+		}
 		return nil
 	}
 
-	// WalkDir uses Lstat semantics — symlinks are reported but not recursed.
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		// Skip the root itself (already emitted above).
-		if p == root {
-			return nil
+	for _, d := range entries {
+		p := filepath.Join(item.path, d.Name())
+
+		// Exclude check (by name + full-path).
+		if s.shouldExclude(d.Name(), p) {
+			continue
 		}
-		if err != nil {
-			if errors.Is(err, fs.ErrPermission) {
-				s.addWarning(fmt.Sprintf("permission denied: %s", p))
-				if d != nil && d.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil // file disappeared mid-walk; not fatal
-			}
-			return err
-		}
-		// Exclude check (by name + substring).
-		if s.shouldExclude(d.Name()) {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		// Competing-root dedup: if this directory IS one of the other roots
-		// configured for this scan (e.g. scanning "/" and we hit "$HOME"),
-		// skip it so it is only counted once (under its own walk).
-		if d.IsDir() && s.isCompetingRoot(p, root) {
+
+		// Competing-root dedup: if this is one of the other roots, skip it.
+		if d.IsDir() && s.isOtherRoot(p, item.origRoot) {
 			s.addWarning(fmt.Sprintf("skipping competing root: %s (scanned separately)", p))
-			return fs.SkipDir
+			continue
 		}
-		// Honor context cancellation cooperatively.
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		info, err := d.Info()
+
+		// Read info for the entry.
+		dinfo, err := d.Info()
 		if err != nil {
-			return nil // skip unreadable entry
+			continue // skip unreadable entry
 		}
-		s.emit(ctx, p, info, depth+1)
-		return nil
-	})
+
+		if d.IsDir() {
+			// Push subdirectory to the queue.
+			q.Push(queueItem{
+				path:     p,
+				depth:    item.depth + 1,
+				origRoot: item.origRoot,
+			})
+		} else {
+			// Emit file entry immediately.
+			if err := s.emit(ctx, p, dinfo, item.depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // emit records a single entry's facts into the scanner's shared counters and
-// appends an Entry to the entries slice. Privacy redaction mutates the path
+// streams an Entry via OnEntry. Privacy redaction mutates the path
 // stored in the Entry.
-func (s *Scanner) emit(ctx context.Context, path string, info os.FileInfo, depth int) {
+//
+// File size is reported as actual disk allocation (matching `du`) unless
+// ScanOptions.UseApparentSize is set. This avoids sparse files (OrbStack VM
+// images, swap files, sparsebundles) inflating directory totals by orders
+// of magnitude via bubbleUpSize.
+func (s *Scanner) emit(ctx context.Context, path string, info os.FileInfo, depth int) error {
+	size := reportSize(info, s.opts.UseApparentSize)
 	if info.IsDir() {
 		s.dirCount.Add(1)
 	} else {
 		s.fileCount.Add(1)
-		s.bytes.Add(info.Size())
+		s.bytes.Add(size)
 	}
 	// Privacy: redact path if it matches a sensitive substring.
 	finalPath := path
@@ -293,44 +385,109 @@ func (s *Scanner) emit(ctx context.Context, path string, info os.FileInfo, depth
 	if s.opts.PrivacyRedactAllPaths {
 		finalPath = "<redacted>"
 	}
-	e := Entry{
+	e := &Entry{
 		Path:         finalPath,
-		Size:         info.Size(),
+		Size:         size,
 		LastModified: info.ModTime(),
 		LastAccessed: atimeOf(info),
 		IsDir:        info.IsDir(),
 		IsSymlink:    info.Mode()&os.ModeSymlink != 0,
 		Depth:        depth,
 	}
-	s.entriesMu.Lock()
-	s.entries = append(s.entries, e)
-	s.entriesMu.Unlock()
+	if info.IsDir() {
+		s.dirMap.Store(path, e)
+	}
+	s.bubbleUpSize(path, size)
+
+	if !info.IsDir() && s.opts.OnEntry != nil {
+		if err := s.opts.OnEntry(*e); err != nil {
+			return err
+		}
+	}
 	slog.DebugContext(ctx, "scan emit",
 		"path", finalPath,
-		"size", info.Size(),
+		"size", size,
 		"is_dir", info.IsDir(),
 		"depth", depth,
 	)
+	return nil
 }
 
-// shouldExclude returns true if name matches any pattern in the exclude list.
-// Patterns are matched as:
-//   - exact basename match (e.g. "node_modules" matches a directory literally named so)
-//   - substring match (e.g. ".cache" matches "Library/Caches/..cache-version")
-func (s *Scanner) shouldExclude(name string) bool {
+// reportSize returns the byte count the scanner should attribute to info.
+//
+// Default: actual disk allocation (st_blocks × 512), matching `du`.
+// This prevents sparse files like VM disk images from inflating parent
+// directory totals — a 228 GB apparent OrbStack .img.raw may only occupy
+// 4 GB on disk.
+//
+// If useApparent is true, returns info.Size() (logical length) instead —
+// useful when the user wants to size a VM's maximum capacity rather than
+// current footprint.
+func reportSize(info os.FileInfo, useApparent bool) int64 {
+	if useApparent {
+		return info.Size()
+	}
+	return onDiskBytes(info)
+}
+
+// onDiskBytes returns the actual disk space consumed by info, in bytes,
+// matching `du`. Falls back to info.Size() when the syscall doesn't expose
+// block counts (e.g., some Windows paths or unusual filesystems).
+func onDiskBytes(info os.FileInfo) int64 {
+	if info == nil {
+		return 0
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Blocks > 0 {
+		// syscall.Stat_t.Blocks is in 512-byte sectors regardless of fs block size.
+		return st.Blocks * 512
+	}
+	return info.Size()
+}
+
+// shouldExclude returns true if the entry should be skipped during walk.
+//
+// Patterns are interpreted as either:
+//   - Path-prefix match (if the pattern starts with "/", e.g. "/dev" matches
+//     "/dev/fd", "/dev/null"): skip if fullPath equals or starts with pattern + "/"
+//   - Basename substring match (otherwise, e.g. "node_modules" matches any
+//     directory literally named so or any file with "node_modules" in name)
+//
+// This dual-mode lets users exclude both absolute system paths (with leading "/")
+// and common directory basenames (without "/").
+func (s *Scanner) shouldExclude(name, fullPath string) bool {
 	if name == "" {
 		return false
 	}
-	lower := strings.ToLower(name)
+	lowerName := strings.ToLower(name)
+	lowerPath := strings.ToLower(fullPath)
 	for _, pattern := range s.excludeLower {
 		if pattern == "" {
 			continue
 		}
-		// Exact match or substring match.
-		if lower == pattern || strings.Contains(lower, pattern) {
+		// Path-prefix patterns (start with "/").
+		if strings.HasPrefix(pattern, "/") {
+			if lowerPath == pattern || strings.HasPrefix(lowerPath, pattern+"/") {
+				return true
+			}
+			// Also catch the trailing-slash variant.
+			if lowerPath == strings.TrimSuffix(pattern, "/") {
+				return true
+			}
+			continue
+		}
+		// Relative path patterns (contain "/").
+		if strings.Contains(pattern, "/") {
+			if lowerPath == pattern || strings.HasPrefix(lowerPath, pattern+"/") ||
+				strings.HasSuffix(lowerPath, "/"+pattern) || strings.Contains(lowerPath, "/"+pattern+"/") {
+				return true
+			}
+			continue
+		}
+		// Basename patterns: exact or substring.
+		if lowerName == pattern || strings.Contains(lowerName, pattern) {
 			return true
 		}
-		// Also try filepath.Match for glob patterns.
+		// Glob fallback.
 		if ok, _ := filepath.Match(pattern, name); ok {
 			return true
 		}
@@ -341,16 +498,15 @@ func (s *Scanner) shouldExclude(name string) bool {
 // ShouldExclude is exposed so the collector (which decides whether to walk
 // a directory by checking cache) can reuse the same exclusion logic.
 func (s *Scanner) ShouldExclude(name string) bool {
-	return s.shouldExclude(name)
+	return s.shouldExclude(name, "")
 }
 
-// isCompetingRoot reports whether path `p` is one of the OTHER scan roots
-// (not the one we are currently walking). Used to prevent double-counting
-// when the user configures overlapping roots such as ["/", "$HOME"].
-func (s *Scanner) isCompetingRoot(p, currentRoot string) bool {
+// isOtherRoot reports whether path `p` is one of the OTHER scan roots
+// (not the one we started walking from). Used to prevent double-counting.
+func (s *Scanner) isOtherRoot(p, origRoot string) bool {
 	cleanP := filepath.Clean(p)
 	for _, r := range s.opts.Roots {
-		if r == currentRoot {
+		if filepath.Clean(r) == filepath.Clean(origRoot) {
 			continue
 		}
 		if filepath.Clean(r) == cleanP {
@@ -358,6 +514,70 @@ func (s *Scanner) isCompetingRoot(p, currentRoot string) bool {
 		}
 	}
 	return false
+}
+
+type queueItem struct {
+	path     string
+	depth    int
+	origRoot string
+}
+
+type bfsQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	items  []queueItem
+	active int
+	closed bool
+}
+
+func newBFSQueue() *bfsQueue {
+	q := &bfsQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *bfsQueue) Push(item queueItem) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return
+	}
+	q.items = append(q.items, item)
+	q.cond.Signal()
+}
+
+func (q *bfsQueue) Pop() (queueItem, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.items) == 0 && !q.closed {
+		if q.active == 0 {
+			q.closed = true
+			q.cond.Broadcast()
+			return queueItem{}, false
+		}
+		q.cond.Wait()
+	}
+	if q.closed {
+		return queueItem{}, false
+	}
+	item := q.items[0]
+	q.items = q.items[1:]
+	q.active++
+	return item, true
+}
+
+func (q *bfsQueue) Done() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.active--
+	q.cond.Broadcast()
+}
+
+func (q *bfsQueue) Close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.closed = true
+	q.cond.Broadcast()
 }
 
 func toLowerAll(in []string) []string {

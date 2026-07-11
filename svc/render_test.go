@@ -49,6 +49,59 @@ func TestPrintSections(t *testing.T) {
 	}
 }
 
+func TestPrintSections_PrefixBanner(t *testing.T) {
+	sections := []ReportSection{
+		{
+			Name:    SectionOverviewRoot,
+			Title:   SectionTitles[SectionOverviewRoot],
+			Entries: []ReportEntry{{Path: "/Users/shuk", Size: 100}},
+		},
+	}
+
+	t.Run("empty prefix emits no banner", func(t *testing.T) {
+		var buf bytes.Buffer
+		PrintSections(&buf, sections, RenderOptions{Prefix: ""})
+		if strings.Contains(buf.String(), "Showing:") {
+			t.Errorf("expected no banner for empty prefix, got: %q", buf.String())
+		}
+	})
+
+	t.Run("short prefix emits banner", func(t *testing.T) {
+		var buf bytes.Buffer
+		PrintSections(&buf, sections, RenderOptions{Prefix: "/Users/shuk"})
+		if !strings.Contains(buf.String(), "Showing: /Users/shuk") {
+			t.Errorf("expected banner with short prefix, got: %q", buf.String())
+		}
+	})
+
+	t.Run("long prefix is skipped", func(t *testing.T) {
+		var buf bytes.Buffer
+		longPrefix := strings.Repeat("a", MaxPrefixBannerRunes+1)
+		PrintSections(&buf, sections, RenderOptions{Prefix: longPrefix})
+		if strings.Contains(buf.String(), "Showing:") {
+			t.Errorf("expected no banner for over-length prefix, got prefix in: %q", buf.String())
+		}
+	})
+
+	t.Run("prefix at the limit emits banner", func(t *testing.T) {
+		var buf bytes.Buffer
+		atLimit := strings.Repeat("a", MaxPrefixBannerRunes)
+		PrintSections(&buf, sections, RenderOptions{Prefix: atLimit})
+		if !strings.Contains(buf.String(), "Showing: "+atLimit) {
+			t.Errorf("expected banner for prefix at exact limit, got: %q", buf.String())
+		}
+	})
+
+	t.Run("multi-byte prefix uses rune count, not byte length", func(t *testing.T) {
+		// "中文目錄" is 12 bytes in UTF-8 but only 4 runes. Must be allowed.
+		var buf bytes.Buffer
+		PrintSections(&buf, sections, RenderOptions{Prefix: "中文目錄"})
+		if !strings.Contains(buf.String(), "Showing: 中文目錄") {
+			t.Errorf("expected banner for short multi-byte prefix, got: %q", buf.String())
+		}
+	})
+}
+
 func TestPrintBarChart(t *testing.T) {
 	var buf bytes.Buffer
 	entries := []ReportEntry{

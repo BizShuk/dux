@@ -33,20 +33,20 @@ func (m *Model) renderList() string {
 	if height <= 0 {
 		height = 30
 	}
-	pathW := width - 30
-	if pathW < 30 {
-		pathW = 30
-	}
-	var sb strings.Builder
-	// Title.
-	sb.WriteString(m.styles.Title.Render(" disk-analyzer — TUI ") + "\n")
-	sb.WriteString(m.styles.Section.Render("  j/k or ↑/↓: navigate • ?: help • q: quit") + "\n\n")
-
-	// Compute visible window around cursor.
-	visible := height - 6 // account for title/help/status
+	// Layout budget.
+	headerLines := 4 // title, mini-help, blank, blank
+	footerLines := 3 // blank, status bar
+	visible := height - headerLines - footerLines
 	if visible < 5 {
 		visible = 5
 	}
+
+	var sb strings.Builder
+	sb.WriteString(m.styles.Title.Render(" disk-analyzer — TUI ") + "\n")
+	sb.WriteString(m.styles.Section.Render(
+		"  ↑/↓ navigate • →/← fold • e expand all • c collapse • enter trash (y confirm) • ?: help • q: quit") + "\n\n")
+
+	// Compute visible window around cursor.
 	start := m.cursor - visible/2
 	if start < 0 {
 		start = 0
@@ -55,58 +55,98 @@ func (m *Model) renderList() string {
 	if end > len(m.flat) {
 		end = len(m.flat)
 	}
+	if start >= end {
+		start = 0
+		end = len(m.flat)
+		if end > visible {
+			end = visible
+		}
+	}
 
 	for i := start; i < end; i++ {
-		item := m.flat[i]
-		if item.depth < 0 {
-			// Section header.
-			sb.WriteString(m.styles.Section.Render(item.entry.Path) + "\n")
-			continue
-		}
-		sb.WriteString(m.renderRow(i, item, pathW) + "\n")
+		sb.WriteString(m.renderRow(i) + "\n")
+	}
+
+	// Scroll indicator.
+	switch {
+	case start > 0 && end < len(m.flat):
+		sb.WriteString(m.styles.Section.Render(
+			fmt.Sprintf("    … %d more rows above • %d below …\n", start, len(m.flat)-end)))
+	case start > 0:
+		sb.WriteString(m.styles.Section.Render(
+			fmt.Sprintf("    … %d more rows above\n", start)))
+	case end < len(m.flat):
+		sb.WriteString(m.styles.Section.Render(
+			fmt.Sprintf("    … %d more rows below\n", len(m.flat)-end)))
 	}
 
 	// Status bar.
-	sb.WriteString("\n")
 	markedCount := len(m.marked)
-	sb.WriteString(m.styles.StatusBar.Render(fmt.Sprintf(
-		" %d items • %d marked • cursor at %d ",
-		len(m.flat), markedCount, m.cursor,
-	)))
+	statusLine := fmt.Sprintf(
+		" %d/%d rows • %d marked • cursor: %s ",
+		len(m.flat), len(m.flat), markedCount, cursorSummary(m.cursorNode()),
+	)
+	if m.statusMessage != "" {
+		statusLine = m.statusMessage + "  |  " + statusLine
+	}
+	sb.WriteString(m.styles.StatusBar.Render(statusLine))
 	return sb.String()
 }
 
-func (m *Model) renderRow(idx int, item treeItem, pathW int) string {
-	e := item.entry
-	// Truncate path.
-	path := e.Path
-	if len(path) > pathW {
-		path = "..." + path[len(path)-(pathW-3):]
+// renderRow renders one treeItem. Layout:
+//
+//   [indent][fold][name...]   [size]
+//
+// indent = 2 spaces * depth
+// fold   = ▼ / ▶ / · / space
+func (m *Model) renderRow(idx int) string {
+	item := m.flat[idx]
+	n := item.node
+	if n == nil {
+		return ""
 	}
 
-	// Indicators.
-	var inds []string
-	if m.marked[e.Path] {
-		inds = append(inds, m.styles.Marked.Render("★"))
-	}
-	if e.IsDuplicate {
-		inds = append(inds, m.styles.Duplicate.Render("◆"))
-	}
-	if !e.LastAccessed.IsZero() && isCold(e.LastAccessed) {
-		inds = append(inds, m.styles.Cold.Render("❄"))
-	}
-	ind := strings.Join(inds, "")
-	if ind == "" {
-		ind = "  "
+	indent := strings.Repeat("  ", item.depth)
+	var fold string
+	switch {
+	case n.isDir && item.expanded:
+		fold = m.styles.Section.Render("▼")
+	case n.isDir && item.hasChildren:
+		fold = m.styles.Section.Render("▶")
+	case n.isDir:
+		// empty directory
+		fold = "·"
+	default:
+		fold = " "
 	}
 
-	size := m.styles.Size.Render(svc.FormatBytes(e.Size))
-	row := fmt.Sprintf("  %-*s  %12s  %s", pathW, path, size, ind)
+	name := n.name
+	if name == "" {
+		name = n.path
+	}
+
+	// Highlight the cursor row using the lipgloss cursor style; everything
+	// else is just plain text. We avoid color-coding marked/dup/cold to
+	// keep the tree visually clean; indicators go in the right-side column.
+	size := m.styles.Size.Render(svc.FormatBytes(n.size))
+	row := fmt.Sprintf("%s%s %s    %s", indent, fold, name, size)
 
 	if idx == m.cursor {
 		return m.styles.Cursor.Render(row)
 	}
 	return row
+}
+
+// cursorSummary is a short "what is the cursor on" label for the status bar
+// (e.g. "dir:Documents" or "file:report.pdf").
+func cursorSummary(n *treeNode) string {
+	if n == nil {
+		return "-"
+	}
+	if n.isDir {
+		return "dir:" + n.name
+	}
+	return "file:" + n.name
 }
 
 func (m *Model) renderHelp() string {
@@ -126,8 +166,11 @@ func (m *Model) renderHelp() string {
 	return sb.String()
 }
 
+// Cold-data threshold check kept so dependents (tests / future features)
+// don't break. Not used in the default view; render flags cold files
+// inside CSV exports where it matters more.
 func isCold(t time.Time) bool {
 	return !t.IsZero() && time.Since(t) > 180*24*time.Hour
 }
 
-var _ = lipgloss.NewStyle // keep import alive in case of future expansions
+var _ = lipgloss.NewStyle // keep import alive for future expansions

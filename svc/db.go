@@ -17,8 +17,8 @@ type EntryRow struct {
 	Path        string `gorm:"primaryKey;size:1024"`
 	ScanDate    string `gorm:"primaryKey;size:10"` // YYYY-MM-DD
 	ScanTS      int64  `gorm:"index"`
-	SizeBytes   int64
-	MTimeUnix   int64 `gorm:"index"`
+	SizeBytes   int64  `gorm:"index"`
+	MTimeUnix   int64  `gorm:"index"`
 	ATimeUnix   int64
 	Category    string `gorm:"size:32"`
 	IsDuplicate bool
@@ -170,6 +170,31 @@ func (d *DB) MarkDuplicates(date string, paths []string, dup bool) error {
 	return nil
 }
 
+// MarkDuplicatesGroups writes the is_duplicate flag back to a specific scan_date for multiple duplicate groups in a single transaction.
+func (d *DB) MarkDuplicatesGroups(date string, groups []DuplicateGroup) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	err := d.g.Transaction(func(tx *gorm.DB) error {
+		for _, g := range groups {
+			if len(g.Paths) == 0 {
+				continue
+			}
+			err := tx.Model(&EntryRow{}).
+				Where("scan_date = ? AND path IN ?", date, g.Paths).
+				Update("is_duplicate", 1).Error
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("db.MarkDuplicatesGroups: %w", err)
+	}
+	return nil
+}
+
 // EntriesBetween returns rows for both dates (typically used by the diff
 // command). Both slices are sorted by path.
 func (d *DB) EntriesBetween(date1, date2 string) (d1, d2 []EntryRow, err error) {
@@ -203,4 +228,42 @@ func RowFromEntry(e Entry, scanDate string, category string, depth int) EntryRow
 		row.ATimeUnix = e.LastAccessed.Unix()
 	}
 	return row
+}
+
+// DuplicateCandidates returns entries for the given date that have a size matching at least one other file.
+// Directories and empty files are excluded.
+func (d *DB) DuplicateCandidates(date string) ([]EntryRow, error) {
+	var rows []EntryRow
+	err := d.g.Raw(`
+		SELECT * FROM entries 
+		WHERE scan_date = ? AND is_dir = 0 AND size_bytes > 0 AND size_bytes IN (
+			SELECT size_bytes FROM entries 
+			WHERE scan_date = ? AND is_dir = 0 AND size_bytes > 0 
+			GROUP BY size_bytes HAVING count(*) > 1
+		) ORDER BY path ASC
+	`, date, date).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("db.DuplicateCandidates(%q): %w", date, err)
+	}
+	return rows, nil
+}
+
+// StreamEntries streams all entries for the given scan date to the callback.
+func (d *DB) StreamEntries(date string, cb func(EntryRow) error) error {
+	rows, err := d.g.Model(&EntryRow{}).Where("scan_date = ?", date).Order("path ASC").Rows()
+	if err != nil {
+		return fmt.Errorf("db.StreamEntries(%q): %w", date, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var row EntryRow
+		if err := d.g.ScanRows(rows, &row); err != nil {
+			return fmt.Errorf("db.StreamEntries scan: %w", err)
+		}
+		if err := cb(row); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

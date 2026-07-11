@@ -13,7 +13,19 @@ type RenderOptions struct {
 	Width       int  // terminal width for layout (default 100)
 	MaxBarWidth int  // bar width in chars (default 40)
 	ShowHeaders bool // print section titles
+	// Prefix, when non-empty, is rendered as a "Showing: <prefix>" banner
+	// before the first section — but only when its rune count is at or
+	// below MaxPrefixBannerRunes. Longer prefixes are skipped because the
+	// banner would dominate the output (and a truncated banner would be
+	// less informative than the user already knowing what they typed).
+	Prefix string
 }
+
+// MaxPrefixBannerRunes caps how long opts.Prefix may be for the "Showing:"
+// banner to be emitted. 80 fits comfortably on a standard terminal without
+// forcing the section table to wrap; prefixes longer than this are skipped
+// to keep the output readable.
+const MaxPrefixBannerRunes = 80
 
 // DefaultRenderOptions returns a RenderOptions with sensible defaults.
 func DefaultRenderOptions() RenderOptions {
@@ -21,7 +33,13 @@ func DefaultRenderOptions() RenderOptions {
 }
 
 // PrintSections writes all sections to w in order, each with a header.
+// When opts.Prefix is set and short enough, a "Showing: <prefix>" banner
+// is emitted first so the user can see at a glance which filter was applied.
 func PrintSections(w io.Writer, sections []ReportSection, opts RenderOptions) {
+	if opts.Prefix != "" && runeCount(opts.Prefix) <= MaxPrefixBannerRunes {
+		fmt.Fprintf(w, "Showing: %s\n", opts.Prefix)
+		fmt.Fprintln(w)
+	}
 	for i, s := range sections {
 		if opts.ShowHeaders {
 			fmt.Fprintln(w)
@@ -111,6 +129,17 @@ func truncatePath(p string, max int) string {
 		return p
 	}
 	return "..." + p[len(p)-(max-3):]
+}
+
+// runeCount returns the number of runes in s. Used by PrintSections to
+// decide whether a Prefix fits in the banner width without truncation,
+// independent of UTF-8 byte length.
+func runeCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
 }
 
 // FormatBytes renders a byte count with adaptive unit (1024-based for binary).

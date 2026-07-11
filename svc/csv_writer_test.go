@@ -32,8 +32,8 @@ func TestWriteCSV_BOMAndHeader(t *testing.T) {
 		t.Errorf("expected BOM, got first bytes: % x", data[:3])
 	}
 	str := string(data[3:])
-	if !strings.Contains(str, "# overview-root") {
-		t.Errorf("expected section header, got: %s", str)
+	if strings.Contains(str, "# overview-root") {
+		t.Errorf("expected no section header, got: %s", str)
 	}
 	if !strings.Contains(str, "path,size,change_size") {
 		t.Errorf("expected column header, got: %s", str)
@@ -149,7 +149,15 @@ func TestBuildOverview_GroupsByDepth(t *testing.T) {
 		{Path: "/Users/x", IsDir: true, Size: 100, Depth: 2},
 		{Path: "/var", IsDir: true, Size: 200, Depth: 1},
 	}
-	got := BuildOverview(entries, "/", 2, 10)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range entries {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	got := BuildOverview(stream, "/", 2, 10)
 	if len(got) == 0 {
 		t.Fatal("expected some entries")
 	}
@@ -166,7 +174,15 @@ func TestBuildCold_SkipsRecent(t *testing.T) {
 		{Path: "/old/small", IsDir: false, Size: 1, LastAccessed: cutoff.Add(-24 * time.Hour)},
 		{Path: "/recent/big", IsDir: false, Size: 200 * 1024 * 1024, LastAccessed: time.Now()},
 	}
-	cold := BuildCold(entries, cutoff, 100*1024*1024)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range entries {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	cold := BuildCold(stream, cutoff, 100*1024*1024)
 	if len(cold) != 1 {
 		t.Errorf("expected 1 cold entry, got %d", len(cold))
 	}

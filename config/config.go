@@ -21,26 +21,24 @@ var defaultSettingsJSON string
 // gosdk paths and must not be set in the user-facing settings.json.
 //
 // Note: Roots is intentionally NOT exposed in settings.json — disk-analyzer
-// always scans ["/", "$HOME"] by default. Use the --roots CLI flag to
-// override for ad-hoc testing.
+// always scans "$HOME" by default. Use the --roots CLI flag to override
+// for ad-hoc testing.
 type Settings struct {
-	ExcludeList        []string `json:"exclude_list"`
-	PrivacyRedactPaths []string `json:"privacy_redact_paths"`
-	Workers            int      `json:"workers"`
-	BreakdownThreshold string   `json:"breakdown_threshold"`
-	ColdSizeThreshold  string   `json:"cold_size_threshold"`
-	ColdAgeDays        int      `json:"cold_age_days"`
-	OverviewRootDepth  int      `json:"overview_root_depth"`
-	OverviewHomeDepth  int      `json:"overview_home_depth"`
-	TopN               int      `json:"top_n"`
-	PrivacyRedact      bool     `json:"privacy_redact"`
-	FollowSymlinks     bool     `json:"follow_symlinks"`
-	Interactive        string   `json:"interactive"` // "auto" / "true" / "false"
+	ExcludeList        []string `json:"exclude_list" mapstructure:"exclude_list"`
+	PrivacyRedactPaths []string `json:"privacy_redact_paths" mapstructure:"privacy_redact_paths"`
+	Workers            int      `json:"workers" mapstructure:"workers"`
+	BreakdownThreshold string   `json:"breakdown_threshold" mapstructure:"breakdown_threshold"`
+	ColdSizeThreshold  string   `json:"cold_size_threshold" mapstructure:"cold_size_threshold"`
+	ColdAgeDays        int      `json:"cold_age_days" mapstructure:"cold_age_days"`
+	OverviewRootDepth  int      `json:"overview_root_depth" mapstructure:"overview_root_depth"`
+	OverviewHomeDepth  int      `json:"overview_home_depth" mapstructure:"overview_home_depth"`
+	TopN               int      `json:"top_n" mapstructure:"top_n"`
+	PrivacyRedact      bool     `json:"privacy_redact" mapstructure:"privacy_redact"`
+	FollowSymlinks     bool     `json:"follow_symlinks" mapstructure:"follow_symlinks"`
+	Interactive        string   `json:"interactive" mapstructure:"interactive"` // "auto" / "true" / "false"
 
-	// Roots is filled by validate() to ["/", "$HOME"] by default. Overridable
-	// at runtime via the --roots CLI flag for testing. Not in settings.json
-	// because the two default roots rely on the scanner's competing-root
-	// dedup logic which assumes ["/", "$HOME"] specifically.
+	// Roots is filled by validate() to ["$HOME"] by default. Overridable
+	// at runtime via the --roots CLI flag for testing.
 	Roots []string `json:"-"`
 
 	// Derived paths — populated by validate() from gosdk config paths.
@@ -79,13 +77,11 @@ func Default() error {
 // Validation failures return errors; missing optional fields get sane defaults.
 //
 // Roots is intentionally NOT configurable via settings.json: disk-analyzer
-// always scans ["/", "$HOME"] by default. This invariant guarantees that the
-// two default roots can dedup against each other (the scanner skips $HOME
-// when walking / to avoid double-counting). Use the --roots CLI flag to
-// override for testing only.
+// always scans "$HOME" by default. Use the --roots CLI flag to override
+// for testing only.
 func (s *Settings) validate() error {
 	if len(s.Roots) == 0 {
-		s.Roots = []string{"/", "$HOME"}
+		s.Roots = []string{"$HOME"}
 	}
 	for _, r := range s.Roots {
 		if r == "" {
@@ -178,6 +174,15 @@ func (s *Settings) BreakdownThresholdBytes() (int64, error) {
 // ColdSizeThresholdBytes parses ColdSizeThreshold as a size string.
 func (s *Settings) ColdSizeThresholdBytes() (int64, error) {
 	return parseSize(s.ColdSizeThreshold)
+}
+
+// ParseSize accepts strings like "100B", "200KB", "100MB", "1GB" and returns
+// the size in bytes. SI (1000) units — not binary (1024) — to match how the
+// "human" sizes are usually displayed; for scan-thresholds this approximation
+// is fine. Exposed so callers (handler/runner.go) can parse CLI overrides
+// like --min-size without re-implementing the unit table.
+func ParseSize(s string) (int64, error) {
+	return parseSize(s)
 }
 
 // parseSize accepts strings like "100B", "200KB", "100MB", "1GB".

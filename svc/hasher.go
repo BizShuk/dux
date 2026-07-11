@@ -13,7 +13,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 // HashOptions configures a DetectDuplicates invocation.
@@ -35,13 +34,15 @@ type headerResult struct {
 // Hasher holds config for a single DetectDuplicates call.
 type Hasher struct {
 	opts HashOptions
-	sem  *semaphore.Weighted
 }
 
 // NewHasher returns a Hasher with sensible defaults applied.
 func NewHasher(opts HashOptions) *Hasher {
 	if opts.Workers <= 0 {
 		opts.Workers = 4
+	}
+	if opts.Workers > 5 {
+		opts.Workers = 5
 	}
 	if opts.HeaderBytes <= 0 {
 		opts.HeaderBytes = 64 * 1024
@@ -51,7 +52,6 @@ func NewHasher(opts HashOptions) *Hasher {
 	}
 	return &Hasher{
 		opts: opts,
-		sem:  semaphore.NewWeighted(int64(opts.Workers)),
 	}
 }
 
@@ -64,21 +64,17 @@ func NewHasher(opts HashOptions) *Hasher {
 //   - Stage 2: hash first HeaderBytes of each file in size-collisions
 //   - Stage 3: hash full content of header-collisions (streaming)
 //   - Returns only groups with len(paths) >= 2
-func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]DuplicateGroup, error) {
-	files := make([]Entry, 0, len(candidates))
-	for _, e := range candidates {
-		if !e.IsDir && e.Size > 0 {
-			files = append(files, e)
+func (h *Hasher) DetectDuplicates(ctx context.Context, stream func(cb func(EntryRow) error) error) ([]DuplicateGroup, error) {
+	bySize := make(map[int64][]string)
+	_ = stream(func(e EntryRow) error {
+		if !e.IsDir && e.SizeBytes > 0 {
+			bySize[e.SizeBytes] = append(bySize[e.SizeBytes], e.Path)
 		}
-	}
-	if len(files) == 0 {
+		return nil
+	})
+	
+	if len(bySize) == 0 {
 		return nil, nil
-	}
-
-	// Stage 1 — size grouping.
-	bySize := make(map[int64][]string, len(files))
-	for _, e := range files {
-		bySize[e.Size] = append(bySize[e.Size], e.Path)
 	}
 
 	// Emit stage-1 groups immediately for visibility (rare duplicates caught
@@ -106,41 +102,71 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 	}
 
 	// Stage 2 — header hash (first HeaderBytes bytes).
-	resultsCh := make(chan headerResult, len(sizeCollisionPaths))
+	pathsCh := make(chan string, 1000)
+	resultsCh := make(chan headerResult, 1000)
 	g, gctx := errgroup.WithContext(ctx)
-	for _, p := range sizeCollisionPaths {
-		p := p
-		size := sizeCollisionIndex[p]
+
+	// Feed paths to workers.
+	go func() {
+		defer close(pathsCh)
+		for _, p := range sizeCollisionPaths {
+			select {
+			case pathsCh <- p:
+			case <-gctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Spawn workers.
+	for i := 0; i < h.opts.Workers; i++ {
 		g.Go(func() error {
-			if err := h.sem.Acquire(gctx, 1); err != nil {
-				return err
-			}
-			defer h.sem.Release(1)
-			hdr, err := readHeader(p, h.opts.HeaderBytes)
-			if err != nil {
-				resultsCh <- headerResult{path: p, size: size, err: err}
-				return nil // record error but don't abort the group
-			}
-			resultsCh <- headerResult{
-				path: p, size: size,
-				hash: xxhash.Sum64(hdr),
+			for p := range pathsCh {
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+				size := sizeCollisionIndex[p]
+				hdr, err := readHeader(p, h.opts.HeaderBytes)
+				if err != nil {
+					select {
+					case resultsCh <- headerResult{path: p, size: size, err: err}:
+					case <-gctx.Done():
+						return gctx.Err()
+					}
+					continue
+				}
+				select {
+				case resultsCh <- headerResult{
+					path: p, size: size,
+					hash: xxhash.Sum64(hdr),
+				}:
+				case <-gctx.Done():
+					return gctx.Err()
+				}
 			}
 			return nil
 		})
 	}
+
+	// Drain resultsCh in a separate goroutine.
+	byHeader := make(map[uint64][]headerResult)
+	var collectDone = make(chan struct{})
+	go func() {
+		defer close(collectDone)
+		for r := range resultsCh {
+			if r.err != nil {
+				continue
+			}
+			byHeader[r.hash] = append(byHeader[r.hash], r)
+		}
+	}()
+
+	// Wait for workers to finish.
 	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return nil, fmt.Errorf("hasher stage2: %w", err)
 	}
 	close(resultsCh)
-
-	// Bucket by header hash.
-	byHeader := make(map[uint64][]headerResult)
-	for r := range resultsCh {
-		if r.err != nil {
-			continue
-		}
-		byHeader[r.hash] = append(byHeader[r.hash], r)
-	}
+	<-collectDone
 
 	// Stage 3 — full hash for header-collision groups.
 	var finalGroups []DuplicateGroup
@@ -254,30 +280,47 @@ func (h *Hasher) fullHashGroup(ctx context.Context, members []headerResult) (map
 	out := make(map[string]uint64, len(members))
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
-	for _, m := range members {
-		m := m
+
+	membersCh := make(chan headerResult, 1000)
+	// Feed members to workers.
+	go func() {
+		defer close(membersCh)
+		for _, m := range members {
+			select {
+			case membersCh <- m:
+			case <-gctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Spawn workers.
+	for i := 0; i < h.opts.Workers; i++ {
 		g.Go(func() error {
-			if err := h.sem.Acquire(gctx, 1); err != nil {
-				return err
+			for m := range membersCh {
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+				f, err := os.Open(m.path)
+				if err != nil {
+					continue // skip unreadable file
+				}
+				hasher := xxhash.New()
+				buf := make([]byte, h.opts.BufferSize)
+				_, err = io.CopyBuffer(hasher, f, buf)
+				f.Close()
+				if err != nil {
+					continue // skip partial reads
+				}
+				fh := hasher.Sum64()
+				mu.Lock()
+				out[m.path] = fh
+				mu.Unlock()
 			}
-			defer h.sem.Release(1)
-			f, err := os.Open(m.path)
-			if err != nil {
-				return nil // skip unreadable file
-			}
-			defer f.Close()
-			hasher := xxhash.New()
-			buf := make([]byte, h.opts.BufferSize)
-			if _, err := io.CopyBuffer(hasher, f, buf); err != nil {
-				return nil // skip partial reads
-			}
-			fh := hasher.Sum64()
-			mu.Lock()
-			out[m.path] = fh
-			mu.Unlock()
 			return nil
 		})
 	}
+
 	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return nil, err
 	}

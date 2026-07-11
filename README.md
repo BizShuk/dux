@@ -75,7 +75,7 @@ pm2 start ecosystem.config.js
 
 ```json
 {
-    "roots": ["/", "$HOME"],
+    "roots": ["$HOME"],
     "exclude_list": ["node_modules", ".git", "..."],
     "privacy_redact_paths": [".ssh", ".aws", "..."],
     "workers": 4,

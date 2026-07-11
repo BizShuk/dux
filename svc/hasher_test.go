@@ -20,7 +20,15 @@ func TestHasher_DetectsExactDuplicate(t *testing.T) {
 		{Path: a, Size: int64(len(content)), IsDir: false},
 		{Path: b, Size: int64(len(content)), IsDir: false},
 	}
-	groups, err := h.DetectDuplicates(context.Background(), candidates)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range candidates {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groups, err := h.DetectDuplicates(context.Background(), stream)
 	if err != nil {
 		t.Fatalf("DetectDuplicates: %v", err)
 	}
@@ -44,7 +52,15 @@ func TestHasher_NoDuplicates(t *testing.T) {
 		{Path: a, Size: 5, IsDir: false},
 		{Path: b, Size: 19, IsDir: false},
 	}
-	groups, _ := h.DetectDuplicates(context.Background(), candidates)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range candidates {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groups, _ := h.DetectDuplicates(context.Background(), stream)
 	if len(groups) != 0 {
 		t.Errorf("expected no groups, got %d: %+v", len(groups), groups)
 	}
@@ -60,7 +76,15 @@ func TestHasher_SkipsDirectories(t *testing.T) {
 		{Path: dir, Size: 0, IsDir: true},
 		{Path: sub, Size: 0, IsDir: true},
 	}
-	groups, _ := h.DetectDuplicates(context.Background(), candidates)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range candidates {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groups, _ := h.DetectDuplicates(context.Background(), stream)
 	if len(groups) != 0 {
 		t.Errorf("directories should be skipped, got %d groups", len(groups))
 	}
@@ -83,7 +107,15 @@ func TestHasher_LargeFileDuplicate(t *testing.T) {
 		{Path: a, Size: int64(len(content)), IsDir: false},
 		{Path: b, Size: int64(len(content)), IsDir: false},
 	}
-	groups, err := h.DetectDuplicates(context.Background(), candidates)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range candidates {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groups, err := h.DetectDuplicates(context.Background(), stream)
 	if err != nil {
 		t.Fatalf("DetectDuplicates: %v", err)
 	}
@@ -118,7 +150,15 @@ func TestHasher_HeaderDistinguishes(t *testing.T) {
 		{Path: a, Size: size, IsDir: false},
 		{Path: b, Size: size, IsDir: false},
 	}
-	groups, _ := h.DetectDuplicates(context.Background(), candidates)
+	stream := func(cb func(EntryRow) error) error {
+		for _, e := range candidates {
+			if err := cb(RowFromEntry(e, "2020", "", e.Depth)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groups, _ := h.DetectDuplicates(context.Background(), stream)
 	// Header differs → should not appear in any duplicate group.
 	for _, g := range groups {
 		for _, p := range g.Paths {

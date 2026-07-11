@@ -32,6 +32,7 @@ var (
 	scanInteractive   string
 	scanAllowMark     bool
 	scanProgress      bool
+	scanApparentSize  bool
 )
 
 var ScanCmd = &cobra.Command{
@@ -71,6 +72,7 @@ var ScanCmd = &cobra.Command{
 			Interactive:   resolveInteractive(scanInteractive),
 			AllowMark:     scanAllowMark,
 			Progress:      scanProgress,
+			ApparentSize:  scanApparentSize,
 		}
 		return r.RunScan(ctx, opts)
 	},
@@ -116,6 +118,8 @@ func init() {
 		"enable mark/unmark keys in TUI")
 	ScanCmd.Flags().BoolVarP(&scanProgress, "progress", "p", false,
 		"show live progress to stderr (counts files/dirs/bytes as they are scanned)")
+	ScanCmd.Flags().BoolVar(&scanApparentSize, "apparent-size", false,
+		"report logical file size (info.Size()) instead of on-disk allocation; matches `du -b` rather than `du`")
 
 	if err := ScanCmd.MarkFlagFilename(""); err != nil {
 		// No-op: just to demonstrate Cobra flag API parity.

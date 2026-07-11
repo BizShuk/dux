@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	diffFrom string
-	diffTo   string
+	diffFrom   string
+	diffTo     string
+	diffPrefix string
 )
 
 var DiffCmd = &cobra.Command{
@@ -27,7 +28,7 @@ var DiffCmd = &cobra.Command{
 			return fmt.Errorf("diff: wire: %w", err)
 		}
 		defer r.Close()
-		return r.RunDiff(context.Background(), diffFrom, diffTo)
+		return r.RunDiff(context.Background(), diffFrom, diffTo, diffPrefix)
 	},
 }
 
@@ -35,4 +36,5 @@ func init() {
 	RootCmd.AddCommand(DiffCmd)
 	DiffCmd.Flags().StringVar(&diffFrom, "from", "", "earlier scan date (YYYY-MM-DD)")
 	DiffCmd.Flags().StringVar(&diffTo, "to", "", "later scan date (YYYY-MM-DD)")
+	DiffCmd.Flags().StringVar(&diffPrefix, "prefix", "", "filter entries by path prefix")
 }

@@ -55,16 +55,15 @@ func WriteCSV(opts CSVOptions) error {
 	}
 
 	w := csv.NewWriter(f)
+	// Write header in the beginning only
+	if err := w.Write([]string{
+		"path", "size", "change_size", "is_duplicate",
+		"last_accessed", "category",
+	}); err != nil {
+		return fmt.Errorf("csv: write column header: %w", err)
+	}
+
 	for _, sec := range opts.Sections {
-		if err := w.Write([]string{"# " + sec.Name}); err != nil {
-			return fmt.Errorf("csv: write section header %s: %w", sec.Name, err)
-		}
-		if err := w.Write([]string{
-			"path", "size", "change_size", "is_duplicate",
-			"last_accessed", "category",
-		}); err != nil {
-			return fmt.Errorf("csv: write column header: %w", err)
-		}
 		for _, e := range sec.Entries {
 			if err := w.Write([]string{
 				sanitizeUTF8(e.Path),
@@ -77,10 +76,10 @@ func WriteCSV(opts CSVOptions) error {
 				return fmt.Errorf("csv: write row %s: %w", e.Path, err)
 			}
 		}
-		w.Flush()
-		if err := w.Error(); err != nil {
-			return fmt.Errorf("csv: flush: %w", err)
-		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("csv: flush: %w", err)
 	}
 	return nil
 }

@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	showDate string
+	showDate   string
+	showPrefix string
 )
 
 var ShowCmd = &cobra.Command{
@@ -22,7 +23,7 @@ var ShowCmd = &cobra.Command{
 			return fmt.Errorf("show: wire: %w", err)
 		}
 		defer r.Close()
-		return r.RunShow(context.Background(), showDate)
+		return r.RunShow(context.Background(), showDate, showPrefix)
 	},
 }
 
@@ -30,4 +31,6 @@ func init() {
 	RootCmd.AddCommand(ShowCmd)
 	ShowCmd.Flags().StringVar(&showDate, "date", "",
 		"scan date (YYYY-MM-DD, default: latest in DB)")
+	ShowCmd.Flags().StringVar(&showPrefix, "prefix", "",
+		"filter entries by path prefix")
 }

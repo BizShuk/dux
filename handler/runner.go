@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/bizshuk/disk-analyzer/config"
@@ -90,6 +92,11 @@ type ScanOpts struct {
 	Interactive  string // auto | true | false
 	AllowMark    bool
 	Progress     bool   // show live progress to stderr
+
+	// ApparentSize: report info.Size() (logical length) instead of on-disk
+	// allocation. Default false matches `du` and prevents sparse VM disk
+	// images from inflating directory totals.
+	ApparentSize bool
 }
 
 // RunScan is the main entry for the `scan` sub-command.
@@ -108,6 +115,21 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 		return fmt.Errorf("scan: parse cold_size_threshold: %w", err)
 	}
 
+	// entryThreshold is the size floor applied to BOTH files and directories
+	// before they're persisted to the DB. Defaults to breakdown_threshold;
+	// `--min-size` overrides per-run. Rationale: the user only cares about
+	// items above this threshold, so storing smaller rows just inflates the
+	// DB and clutters the tree with noise (see issue: TUI showed 21MB / 29MB
+	// / 41MB folders under $HOME that the user never wanted to see).
+	entryThreshold := minSize
+	if opts.MinSize != "" {
+		v, perr := config.ParseSize(opts.MinSize)
+		if perr != nil {
+			return fmt.Errorf("scan: parse --min-size %q: %w", opts.MinSize, perr)
+		}
+		entryThreshold = v
+	}
+
 	// Apply exclude flags.
 	exclude := r.cfg.ExcludeList
 	if opts.ExcludeReset {
@@ -121,6 +143,20 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	}
 
 	// Step 1: scan.
+	var rowsMu sync.Mutex
+	var rows []svc.EntryRow
+	flushRows := func(force bool) error {
+		rowsMu.Lock()
+		defer rowsMu.Unlock()
+		if len(rows) >= 5000 || (force && len(rows) > 0) {
+			if _, err := r.db.UpsertEntries(rows); err != nil {
+				return fmt.Errorf("scan: persist rows: %w", err)
+			}
+			rows = rows[:0] // reset slice
+		}
+		return nil
+	}
+
 	scanOpts := svc.ScanOptions{
 		Roots:              r.cfg.Roots,
 		ExcludeList:        exclude,
@@ -128,6 +164,24 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 		FollowSymlinks:     r.cfg.FollowSymlinks,
 		PrivacyRedact:      r.cfg.PrivacyRedact,
 		PrivacyRedactPaths: r.cfg.PrivacyRedactPaths,
+		UseApparentSize:    opts.ApparentSize,
+		OnEntry: func(e svc.Entry) error {
+			// Drop anything below the configured threshold — applies to
+			// both files (their own bytes) and directories (aggregated
+			// sum from bubbleUpSize, emitted at end-of-scan). Children
+			// of dropped directories that are themselves >= threshold
+			// become orphan roots in the tree — that's intentional:
+			// they're still items the user cares about.
+			if e.Size < entryThreshold {
+				return nil
+			}
+			cat := svc.CategorizeByExt(e.Path)
+			row := svc.RowFromEntry(e, date, cat, e.Depth)
+			rowsMu.Lock()
+			rows = append(rows, row)
+			rowsMu.Unlock()
+			return flushRows(false)
+		},
 	}
 	if opts.Progress {
 		scanOpts.Progress = renderProgressToStderr
@@ -140,6 +194,10 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	if err != nil {
 		return fmt.Errorf("scan: walk: %w", err)
 	}
+	// Flush any remaining records
+	if err := flushRows(true); err != nil {
+		return err
+	}
 	slog.Info("scan complete",
 		"files", scanResult.FileCount,
 		"dirs", scanResult.DirCount,
@@ -147,39 +205,25 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 		"warnings", len(scanResult.Warnings),
 		"duration", scanResult.Duration,
 	)
-	// If progress mode was on, terminate the carriage-return line so the
-	// final summary and subsequent sections render on their own lines.
 	if opts.Progress {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Step 2: collector + cache write.
-	// Persist each scanner entry to the DB so report builders can read them back.
-	rows := make([]svc.EntryRow, 0, len(scanResult.Entries))
-	for _, e := range scanResult.Entries {
-		cat := svc.CategorizeByExt(e.Path)
-		rows = append(rows, svc.RowFromEntry(e, date, cat, e.Depth))
-	}
-	if _, err := r.db.UpsertEntries(rows); err != nil {
-		return fmt.Errorf("scan: persist rows: %w", err)
-	}
 	for _, w := range scanResult.Warnings {
 		slog.Warn("scan warning", "msg", w)
 	}
 
-	// Step 3: read back the just-persisted rows to populate report sections.
-	allRows, err := r.db.EntriesForDate(date)
-	if err != nil {
-		return fmt.Errorf("scan: read rows: %w", err)
+	// Step 2 & 3: streaming iterators.
+	streamer := func(cb func(svc.EntryRow) error) error {
+		return r.db.StreamEntries(date, cb)
 	}
-	allEntries := rowsToEntries(allRows)
 
 	// Step 4: report sections.
 	b := svc.NewReportBuilder()
 
 	// Overview — root + home at configured depths.
-	overviewRoot := svc.BuildOverview(allEntries, "/", r.cfg.OverviewRootDepth, opts.TopN)
-	overviewHome := svc.BuildOverview(allEntries, home(), r.cfg.OverviewHomeDepth, opts.TopN)
+	overviewRoot := svc.BuildOverview(streamer, "/", r.cfg.OverviewRootDepth, opts.TopN)
+	overviewHome := svc.BuildOverview(streamer, home(), r.cfg.OverviewHomeDepth, opts.TopN)
 	if overviewRoot != nil {
 		b.Set(svc.SectionOverviewRoot, overviewRoot)
 	}
@@ -188,8 +232,8 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	}
 
 	// Breakdown — root + home, > minSize.
-	breakdownRoot := svc.BuildBreakdown(allEntries, "/", minSize)
-	breakdownHome := svc.BuildBreakdown(allEntries, home(), minSize)
+	breakdownRoot := svc.BuildBreakdown(streamer, "/", minSize)
+	breakdownHome := svc.BuildBreakdown(streamer, home(), minSize)
 	if breakdownRoot != nil {
 		b.Set(svc.SectionBreakdownRoot, breakdownRoot)
 	}
@@ -198,22 +242,35 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	}
 
 	// Step 5: dedup.
+	dupStreamer := func(cb func(svc.EntryRow) error) error {
+		candidates, err := r.db.DuplicateCandidates(date)
+		if err != nil {
+			return err
+		}
+		for _, c := range candidates {
+			if err := cb(c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	hasher := svc.NewHasher(svc.HashOptions{Workers: opts.Workers})
-	dupGroups, err := hasher.DetectDuplicates(ctx, allEntries)
+	dupGroups, err := hasher.DetectDuplicates(ctx, dupStreamer)
 	if err != nil {
 		slog.Warn("scan: dedup failed, continuing", "err", err)
 	}
 	if dupGroups != nil {
 		b.Set(svc.SectionDuplicate, svc.DuplicateSectionEntries(dupGroups))
-		// Mark in DB.
-		for _, g := range dupGroups {
-			_ = r.db.MarkDuplicates(date, g.Paths, true)
+		// Mark in DB in a single transaction.
+		if err := r.db.MarkDuplicatesGroups(date, dupGroups); err != nil {
+			slog.Warn("scan: mark duplicates failed", "err", err)
 		}
 	}
 
 	// Step 6: cold.
 	cutoff := time.Now().Add(-time.Duration(r.cfg.ColdAgeDays) * 24 * time.Hour)
-	cold := svc.BuildCold(allEntries, cutoff, coldSize)
+	cold := svc.BuildCold(streamer, cutoff, coldSize)
 	if cold != nil {
 		b.Set(svc.SectionCold, cold)
 	}
@@ -257,13 +314,12 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	_ = opts.ColdMode
 	_ = opts.Interactive
 	_ = opts.AllowMark
-	_ = opts.MinSize
 	return nil
 }
 
 // RunShow reads historical rows for a given date and prints them.
 // Empty date → latest in DB.
-func (r *Runner) RunShow(ctx context.Context, date string) error {
+func (r *Runner) RunShow(ctx context.Context, date string, prefix string) error {
 	_ = ctx
 	if date == "" {
 		var err error
@@ -275,21 +331,36 @@ func (r *Runner) RunShow(ctx context.Context, date string) error {
 			return errors.New("show: no scans in DB yet")
 		}
 	}
-	rows, err := r.db.EntriesForDate(date)
-	if err != nil {
-		return fmt.Errorf("show: read rows: %w", err)
+	streamer := func(cb func(svc.EntryRow) error) error {
+		return r.db.StreamEntries(date, cb)
 	}
-	allEntries := rowsToEntries(rows)
 	b := svc.NewReportBuilder()
-	overviewRoot := svc.BuildOverview(allEntries, "/", r.cfg.OverviewRootDepth, r.cfg.TopN)
+	overviewRoot := svc.BuildOverview(streamer, "/", r.cfg.OverviewRootDepth, r.cfg.TopN)
 	b.Set(svc.SectionOverviewRoot, overviewRoot)
 	b.SortEntriesByPath()
-	svc.PrintSections(os.Stdout, b.Sections(), svc.DefaultRenderOptions())
+
+	sections := b.Sections()
+	if prefix != "" {
+		for i := range sections {
+			filtered := make([]svc.ReportEntry, 0)
+			for _, entry := range sections[i].Entries {
+				if strings.HasPrefix(entry.Path, prefix) {
+					filtered = append(filtered, entry)
+				}
+			}
+			sections[i].Entries = filtered
+		}
+	}
+	// Pass prefix through to the renderer so it can emit a "Showing:"
+	// banner when the prefix is short enough to render in full.
+	ropts := svc.DefaultRenderOptions()
+	ropts.Prefix = prefix
+	svc.PrintSections(os.Stdout, sections, ropts)
 	return nil
 }
 
 // RunDiff compares two dates and prints top growth entries.
-func (r *Runner) RunDiff(ctx context.Context, date1, date2 string) error {
+func (r *Runner) RunDiff(ctx context.Context, date1, date2 string, prefix string) error {
 	_ = ctx
 	if date1 == "" || date2 == "" {
 		return errors.New("diff: both --from and --to dates required")
@@ -301,6 +372,17 @@ func (r *Runner) RunDiff(ctx context.Context, date1, date2 string) error {
 	d1Entries := rowsToEntries(d1Rows)
 	d2Entries := rowsToEntries(d2Rows)
 	diff := svc.DiffEntries(d2Entries, d1Entries)
+
+	if prefix != "" {
+		filtered := make([]svc.ReportEntry, 0)
+		for _, e := range diff {
+			if strings.HasPrefix(e.Path, prefix) {
+				filtered = append(filtered, e)
+			}
+		}
+		diff = filtered
+	}
+
 	top := svc.TopGrowth(diff, r.cfg.TopN)
 	fmt.Fprintf(os.Stdout, "diff %s → %s — top %d growth paths:\n", date1, date2, r.cfg.TopN)
 	for _, e := range top {
@@ -329,13 +411,31 @@ func (r *Runner) ReadDate(date string) ([]svc.EntryRow, error) {
 //
 // Format:
 //
-//   [disk-analyzer pid=12345]  1234 files · 234 dirs · 12.3 MB scanned · 5 warnings · 8 goroutines · 1.2s elapsed
+//   [disk-analyzer pid=12345]  …/Library/Caches/com.apple.Safari  1234 files · 234 dirs · 12.3 MB scanned · 5 warnings · 8 goroutines · 1.2s elapsed
 func renderProgressToStderr(snap svc.ProgressSnapshot) {
 	const clear = "\x1b[K"
-	line := fmt.Sprintf("\r[disk-analyzer pid=%d]  %d files · %d dirs · %s scanned · %d warnings · %d goroutines · %s elapsed%s",
-		snap.PID, snap.Files, snap.Dirs, svc.FormatBytes(snap.Bytes),
+	cur := truncatePath(snap.CurrentPath, 60)
+	if cur == "" {
+		cur = "(starting)"
+	}
+	line := fmt.Sprintf("\r[disk-analyzer pid=%d]  %s  %d files · %d dirs · %s scanned · %d warnings · %d goroutines · %s elapsed%s",
+		snap.PID, cur, snap.Files, snap.Dirs, svc.FormatBytes(snap.Bytes),
 		snap.Warnings, snap.Goroutines, snap.Elapsed.Round(time.Millisecond), clear)
 	fmt.Fprint(os.Stderr, line)
+}
+
+// truncatePath returns the last n runes of p with a "…" prefix if p is longer
+// than n. Used to keep the one-line progress output readable on narrow
+// terminals while still showing the deepest scanned directory.
+func truncatePath(p string, n int) string {
+	if p == "" || n <= 0 {
+		return ""
+	}
+	runes := []rune(p)
+	if len(runes) <= n {
+		return p
+	}
+	return "…" + string(runes[len(runes)-(n-1):])
 }
 
 // rowsToEntries converts DB rows back into the Entry type used in collectors.

@@ -3,8 +3,8 @@
         "node_modules", ".git", ".venv", "venv", ".cache",
         ".tox", ".pytest_cache", "DerivedData",
         "Library/Caches", "Library/Developer",
-        "System/Volumes/Data", ".Trash", "tmp", ".tmp", "__pycache__",
-        "dev", "proc", "sys"
+        "/System/Volumes/Data", ".Trash", "tmp", ".tmp", "__pycache__",
+        "/dev", "/proc", "/sys", "/private/var", "/System/Volumes"
     ],
     "privacy_redact_paths": [
         ".ssh", ".gnupg", ".aws", ".kube", ".docker",

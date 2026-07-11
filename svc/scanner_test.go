@@ -2,9 +2,12 @@ package svc
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -156,6 +159,13 @@ func TestScanner_PermissionDeniedDoesNotAbort(t *testing.T) {
 	must(t, os.Chmod(filepath.Join(root, "locked"), 0o000))
 	defer os.Chmod(filepath.Join(root, "locked"), 0o755) // restore for cleanup
 
+	// Set default logger to debug level so warnings are collected.
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+	oldDefault := slog.Default()
+	slog.SetDefault(logger)
+	defer slog.SetDefault(oldDefault)
+
 	s, _ := NewScanner(ScanOptions{Roots: []string{root}, Workers: 1})
 	res, _ := s.Scan(context.Background())
 	if len(res.Warnings) == 0 {
@@ -183,21 +193,29 @@ func TestScanner_CompetingRootDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var entries []Entry
+	var mu sync.Mutex
 	s, err := NewScanner(ScanOptions{
 		Roots:   []string{outer, inner},
 		Workers: 1,
+		OnEntry: func(e Entry) error {
+			mu.Lock()
+			entries = append(entries, e)
+			mu.Unlock()
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewScanner: %v", err)
 	}
-	res, err := s.Scan(context.Background())
+	_, err = s.Scan(context.Background())
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 
 	// Count how many times the inner marker appears in entries.
 	count := 0
-	for _, e := range res.Entries {
+	for _, e := range entries {
 		if filepath.Base(e.Path) == "marker.txt" {
 			count++
 		}
@@ -217,9 +235,168 @@ func TestScanner_NoDedup_WhenDistinctRoots(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dirB, "b.txt"), []byte("b"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := NewScanner(ScanOptions{Roots: []string{dirA, dirB}, Workers: 1})
-	res, _ := s.Scan(context.Background())
-	if len(res.Entries) < 4 { // at least 2 files + 2 dirs (each root emits itself)
-		t.Errorf("expected at least 4 entries, got %d", len(res.Entries))
+	var entries []Entry
+	var mu sync.Mutex
+	s, _ := NewScanner(ScanOptions{
+		Roots: []string{dirA, dirB}, 
+		Workers: 1,
+		OnEntry: func(e Entry) error {
+			mu.Lock()
+			entries = append(entries, e)
+			mu.Unlock()
+			return nil
+		},
+	})
+	_, _ = s.Scan(context.Background())
+	if len(entries) < 4 { // at least 2 files + 2 dirs (each root emits itself)
+		t.Errorf("expected at least 4 entries, got %d", len(entries))
+	}
+}
+
+// makeSparseFile creates a file that is large in apparent size but small on
+// disk by writing one 4KB block and seeking to a high offset. On filesystems
+// that don't support holes the test still allocates contiguous blocks and the
+// assertions degrade gracefully (they assert the upper bound rather than a
+// strict inequality).
+func makeSparseFile(t *testing.T, path string, apparentSize int64) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create sparse: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(make([]byte, 4096)); err != nil {
+		t.Fatalf("write anchor: %v", err)
+	}
+	if _, err := f.Seek(apparentSize-1, io.SeekStart); err != nil {
+		t.Fatalf("seek: %v", err)
+	}
+	if _, err := f.Write([]byte{0}); err != nil {
+		t.Fatalf("extend: %v", err)
+	}
+}
+
+func TestOnDiskBytes_SparseFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sparse.raw")
+	const apparentSize = 512 * 1024 * 1024 // 512MB logical
+	makeSparseFile(t, path, apparentSize)
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	apparent := info.Size()
+	onDisk := onDiskBytes(info)
+
+	if apparent != apparentSize {
+		t.Fatalf("apparent size: want %d, got %d", apparentSize, apparent)
+	}
+	if onDisk > 1*1024*1024 {
+		t.Errorf("on-disk should be tiny for a 512MB apparent sparse file, got %d bytes", onDisk)
+	}
+}
+
+func TestScanner_EmitsOnDiskBytesByDefault(t *testing.T) {
+	dir := t.TempDir()
+	const apparentSize = 256 * 1024 * 1024
+	makeSparseFile(t, filepath.Join(dir, "sparse.raw"), apparentSize)
+	if err := os.WriteFile(filepath.Join(dir, "normal.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var entries []Entry
+	var mu sync.Mutex
+	s, err := NewScanner(ScanOptions{
+		Roots:   []string{dir},
+		Workers: 1,
+		OnEntry: func(e Entry) error {
+			if !e.IsDir {
+				mu.Lock()
+				entries = append(entries, e)
+				mu.Unlock()
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, e := range entries {
+		switch filepath.Base(e.Path) {
+		case "sparse.raw":
+			if e.Size >= apparentSize {
+				t.Errorf("scanner reported apparent size %d for sparse file (should be on-disk, << %d)", e.Size, apparentSize)
+			}
+		case "normal.txt":
+			// A 5-byte file on APFS occupies one 4KB block, so on-disk
+			// bytes round up to 4096 (matching `du`). Assert that we
+			// report block-aligned on-disk size, not the 5-byte apparent.
+			if e.Size != 4096 {
+				t.Errorf("scanner reported size %d for normal.txt; want 4096 (one APFS block)", e.Size)
+			}
+		}
+	}
+}
+
+func TestScanner_ApparentSizeFlagPreservesLogicalSize(t *testing.T) {
+	dir := t.TempDir()
+	const apparentSize = 256 * 1024 * 1024
+	makeSparseFile(t, filepath.Join(dir, "sparse.raw"), apparentSize)
+
+	var found Entry
+	var mu sync.Mutex
+	s, _ := NewScanner(ScanOptions{
+		Roots:           []string{dir},
+		Workers:         1,
+		UseApparentSize: true,
+		OnEntry: func(e Entry) error {
+			if !e.IsDir && filepath.Base(e.Path) == "sparse.raw" {
+				mu.Lock()
+				found = e
+				mu.Unlock()
+			}
+			return nil
+		},
+	})
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if found.Path == "" {
+		t.Fatal("sparse.raw entry not emitted")
+	}
+	if found.Size != apparentSize {
+		t.Errorf("apparent-size mode: want %d, got %d", apparentSize, found.Size)
+	}
+}
+
+func TestScanner_ShouldExcludeFullPath(t *testing.T) {
+	s, _ := NewScanner(ScanOptions{
+		Roots:       []string{"/"},
+		Workers:     1,
+		ExcludeList: []string{"/private/var", "/dev", "Library/Caches"},
+	})
+	if !s.shouldExclude("var", "/private/var") {
+		t.Error("expected /private/var to be excluded")
+	}
+	if !s.shouldExclude("var", "/private/var/ma") {
+		t.Error("expected /private/var/ma to be excluded")
+	}
+	if s.shouldExclude("private", "/private") {
+		t.Error("expected /private not to be excluded")
+	}
+	if !s.shouldExclude("Caches", "/Users/shuk/Library/Caches") {
+		t.Error("expected /Users/shuk/Library/Caches to be excluded")
+	}
+	if !s.shouldExclude("temp", "/Users/shuk/Library/Caches/temp") {
+		t.Error("expected /Users/shuk/Library/Caches/temp to be excluded")
+	}
+	if s.shouldExclude("Library", "/Users/shuk/Library") {
+		t.Error("expected /Users/shuk/Library not to be excluded")
 	}
 }

@@ -158,7 +158,7 @@ func (b *ReportBuilder) SortEntriesByPath() {
 //
 // For each directory at the *boundary* depth (maxDepth), include it as one row.
 // For each intermediate directory (depth 0..maxDepth-1), also include it.
-func BuildOverview(entries []Entry, root string, maxDepth int, topN int) []ReportEntry {
+func BuildOverview(stream func(cb func(EntryRow) error) error, root string, maxDepth int, topN int) []ReportEntry {
 	if maxDepth <= 0 {
 		maxDepth = 1
 	}
@@ -167,12 +167,12 @@ func BuildOverview(entries []Entry, root string, maxDepth int, topN int) []Repor
 		path string
 	}
 	seen := make(map[string]*pair)
-	for _, e := range entries {
+	_ = stream(func(e EntryRow) error {
 		if !e.IsDir {
-			continue
+			return nil
 		}
 		if !strings.HasPrefix(e.Path, root) {
-			continue
+			return nil
 		}
 		// Compute relative depth under root.
 		rel := strings.TrimPrefix(e.Path, root)
@@ -182,16 +182,17 @@ func BuildOverview(entries []Entry, root string, maxDepth int, topN int) []Repor
 			depth = len(strings.Split(rel, "/"))
 		}
 		if depth > maxDepth {
-			continue
+			return nil
 		}
 		if existing, ok := seen[e.Path]; ok {
-			if e.Size > existing.size {
-				existing.size = e.Size
+			if e.SizeBytes > existing.size {
+				existing.size = e.SizeBytes
 			}
-			continue
+			return nil
 		}
-		seen[e.Path] = &pair{size: e.Size, path: e.Path}
-	}
+		seen[e.Path] = &pair{size: e.SizeBytes, path: e.Path}
+		return nil
+	})
 	out := make([]ReportEntry, 0, len(seen))
 	for _, p := range seen {
 		out = append(out, ReportEntry{
@@ -212,49 +213,52 @@ func BuildOverview(entries []Entry, root string, maxDepth int, topN int) []Repor
 //
 // We mark entries that are directories with Depth >= 0; the caller is
 // responsible for any further recursion via the scanner.
-func BuildBreakdown(entries []Entry, root string, minSize int64) []ReportEntry {
+func BuildBreakdown(stream func(cb func(EntryRow) error) error, root string, minSize int64) []ReportEntry {
 	out := make([]ReportEntry, 0)
-	for _, e := range entries {
+	_ = stream(func(e EntryRow) error {
 		if !strings.HasPrefix(e.Path, root) {
-			continue
+			return nil
 		}
-		if e.Size < minSize {
-			continue
+		if e.SizeBytes < minSize {
+			return nil
 		}
 		out = append(out, ReportEntry{
-			Path:        e.Path,
-			Size:        e.Size,
-			Category:    CategorizeByExt(e.Path),
-			LastAccessed: e.LastAccessed,
-			Depth:       e.Depth,
+			Path:         e.Path,
+			Size:         e.SizeBytes,
+			Category:     CategorizeByExt(e.Path),
+			LastAccessed: time.Unix(e.ATimeUnix, 0),
+			Depth:        e.Depth,
 		})
-	}
+		return nil
+	})
 	return out
 }
 
 // BuildCold returns entries considered "cold": atime older than coldAge AND
 // size >= coldMinSize. Linux noatime means atime may be zero — those are
 // flagged as cold (true to spec, since we can't trust atime on noatime fs).
-func BuildCold(entries []Entry, cutoff time.Time, coldMinSize int64) []ReportEntry {
+func BuildCold(stream func(cb func(EntryRow) error) error, cutoff time.Time, coldMinSize int64) []ReportEntry {
 	out := make([]ReportEntry, 0)
-	for _, e := range entries {
+	_ = stream(func(e EntryRow) error {
 		if e.IsDir {
-			continue
+			return nil
 		}
-		if e.Size < coldMinSize {
-			continue
+		if e.SizeBytes < coldMinSize {
+			return nil
 		}
-		if !e.LastAccessed.IsZero() && e.LastAccessed.After(cutoff) {
-			continue
+		aTime := time.Unix(e.ATimeUnix, 0)
+		if !aTime.IsZero() && aTime.After(cutoff) {
+			return nil
 		}
 		out = append(out, ReportEntry{
 			Path:         e.Path,
-			Size:         e.Size,
+			Size:         e.SizeBytes,
 			Category:     CategorizeByExt(e.Path),
-			LastAccessed: e.LastAccessed,
+			LastAccessed: aTime,
 			Depth:        e.Depth,
 		})
-	}
+		return nil
+	})
 	return out
 }
 

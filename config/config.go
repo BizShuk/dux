@@ -32,8 +32,8 @@ var defaultSettingsJSON string
 // Fields tagged with `json:"-"` are populated at validate() time from
 // gosdk paths and must not be set in the user-facing settings.json.
 type Settings struct {
-	TopN              int      `json:"top_n" mapstructure:"top_n"`
-	OverviewRootDepth int      `json:"overview_root_depth" mapstructure:"overview_root_depth"`
+	TopN               int      `json:"top_n" mapstructure:"top_n"`
+	OverviewRootDepth  int      `json:"overview_root_depth" mapstructure:"overview_root_depth"`
 	PrivacyRedactPaths []string `json:"privacy_redact_paths" mapstructure:"privacy_redact_paths"`
 
 	// Excludes is a list of glob patterns passed to du.Usage.
@@ -60,7 +60,7 @@ var GlobalSettings *Settings
 // Must be called once from main() before any command runs.
 func Default() error {
 	config.Default(
-		config.WithAppName("disk-analyzer"),
+		config.WithAppName("dux"),
 		config.WithDefaultValue(defaultSettingsJSON),
 	)
 	GlobalSettings = &Settings{}

@@ -3,9 +3,12 @@ package svc
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
+
+// openTestDB is defined in collector_test.go and shared.
 
 func TestOpenDB_InvalidPath(t *testing.T) {
 	_, err := OpenDB("")
@@ -41,8 +44,9 @@ func TestDB_UpsertEntriesChunked(t *testing.T) {
 	now := time.Now()
 	rows := make([]EntryRow, 1200) // forces 3 chunks at chunk=500
 	for i := range rows {
+		// Each row has a UNIQUE path so the (path, scan_date) primary key is satisfied.
 		rows[i] = EntryRow{
-			Path:      filepath.Join("/tmp", string(rune('a'+i%26)), "f"),
+			Path:      filepath.Join("/tmp", "chunked", "row-"+strconv.Itoa(i)),
 			ScanDate:  "2026-07-11",
 			ScanTS:    now.Unix(),
 			SizeBytes: int64(i),

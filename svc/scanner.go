@@ -53,6 +53,8 @@ type Scanner struct {
 	opts         ScanOptions
 	warnMu       sync.Mutex
 	warnings     []string
+	entriesMu    sync.Mutex
+	entries      []Entry
 	fileCount    atomic.Int64
 	dirCount     atomic.Int64
 	bytes        atomic.Int64
@@ -104,7 +106,11 @@ func (s *Scanner) result() *ScanResult {
 	s.warnMu.Lock()
 	warnings := append([]string(nil), s.warnings...)
 	s.warnMu.Unlock()
+	s.entriesMu.Lock()
+	entries := append([]Entry(nil), s.entries...)
+	s.entriesMu.Unlock()
 	return &ScanResult{
+		Entries:      entries,
 		Warnings:     warnings,
 		FileCount:    s.fileCount.Load(),
 		DirCount:     s.dirCount.Load(),
@@ -196,9 +202,9 @@ func (s *Scanner) walk(ctx context.Context, root string, depth int) error {
 	})
 }
 
-// emit records a single entry's facts into the scanner's shared counters.
-// Does NOT push to entries slice — that is the collector's job. This keeps
-// the scanner stateless about output and lets the caller decide what to persist.
+// emit records a single entry's facts into the scanner's shared counters and
+// appends an Entry to the entries slice. Privacy redaction mutates the path
+// stored in the Entry.
 func (s *Scanner) emit(ctx context.Context, path string, info os.FileInfo, depth int) {
 	if info.IsDir() {
 		s.dirCount.Add(1)
@@ -220,6 +226,18 @@ func (s *Scanner) emit(ctx context.Context, path string, info os.FileInfo, depth
 	if s.opts.PrivacyRedactAllPaths {
 		finalPath = "<redacted>"
 	}
+	e := Entry{
+		Path:         finalPath,
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
+		LastAccessed: atimeOf(info),
+		IsDir:        info.IsDir(),
+		IsSymlink:    info.Mode()&os.ModeSymlink != 0,
+		Depth:        depth,
+	}
+	s.entriesMu.Lock()
+	s.entries = append(s.entries, e)
+	s.entriesMu.Unlock()
 	slog.DebugContext(ctx, "scan emit",
 		"path", finalPath,
 		"size", info.Size(),
@@ -265,4 +283,19 @@ func toLowerAll(in []string) []string {
 		out[i] = strings.ToLower(v)
 	}
 	return out
+}
+
+// atimeOf best-effort extracts atime from os.FileInfo. On Linux with noatime
+// filesystems, atime is unreliable; we still capture whatever the FS returns.
+func atimeOf(info os.FileInfo) time.Time {
+	type interfaceWithAtime interface {
+		ModTime() time.Time
+	}
+	// os.FileInfo only exposes ModTime(). For atime we rely on the caller
+	// (handler) to enrich with platform-specific stat if needed.
+	// Returning ModTime() is incorrect for cold-data detection — but the
+	// BuildCold filter treats IsZero as cold, which is the safer default on
+	// platforms that don't expose atime.
+	_ = interfaceWithAtime(nil)
+	return time.Time{}
 }

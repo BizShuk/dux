@@ -131,22 +131,25 @@ func (r *Runner) RunScan(ctx context.Context, opts ScanOpts) error {
 	)
 
 	// Step 2: collector + cache write.
-	collector, err := svc.NewCollector(r.db, date)
-	if err != nil {
-		return fmt.Errorf("scan: collector: %w", err)
+	// Persist each scanner entry to the DB so report builders can read them back.
+	rows := make([]svc.EntryRow, 0, len(scanResult.Entries))
+	for _, e := range scanResult.Entries {
+		cat := svc.CategorizeByExt(e.Path)
+		rows = append(rows, svc.RowFromEntry(e, date, cat, e.Depth))
 	}
-	// We did not implement incremental-cache in the scanner walk itself,
-	// so for v1 every dir is recorded as "fresh." TODO: integrate cache.
+	if _, err := r.db.UpsertEntries(rows); err != nil {
+		return fmt.Errorf("scan: persist rows: %w", err)
+	}
 	for _, w := range scanResult.Warnings {
 		slog.Warn("scan warning", "msg", w)
 	}
 
 	// Step 3: read back the just-persisted rows to populate report sections.
-	rows, err := r.db.EntriesForDate(date)
+	allRows, err := r.db.EntriesForDate(date)
 	if err != nil {
 		return fmt.Errorf("scan: read rows: %w", err)
 	}
-	allEntries := rowsToEntries(rows)
+	allEntries := rowsToEntries(allRows)
 
 	// Step 4: report sections.
 	b := svc.NewReportBuilder()

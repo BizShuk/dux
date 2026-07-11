@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bizshuk/gosdk/db"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // EntryRow is the gorm representation of a single row in the entries table.
@@ -34,43 +35,37 @@ func (EntryRow) TableName() string {
 // DB wraps the gorm.DB and provides DAO methods for entry persistence.
 // It is safe for concurrent use (gorm.DB is itself concurrency-safe).
 type DB struct {
-	g   *gorm.DB
-	dbh *db.SQLite // reference to keep the connection alive
+	g *gorm.DB
 }
 
 // OpenDB opens (or creates) the SQLite database at path and runs migrations.
-// If gosdk/db.DefaultSQLite is already initialized (e.g. by an outer caller),
-// it is reused instead of opening a second connection.
+// Each call opens a fresh *gorm.DB to avoid gosdk/db.DefaultSQLite's singleton
+// lifecycle (which fails to re-init after Close). For a single-shot CLI this
+// is fine; for daemon mode we'd refactor to keep one connection alive.
 func OpenDB(path string) (*DB, error) {
 	if path == "" {
 		return nil, errors.New("db: path required")
 	}
-	if err := db.InitSQLite(); err != nil {
-		// InitSQLite returns an error if SQLITE_PATH wasn't set OR already
-		// initialized. The already-initialized case is fine for our purposes.
-		if db.DefaultSQLite == nil {
-			return nil, fmt.Errorf("db: init sqlite: %w", err)
-		}
-	}
-	g := db.DefaultSQLite.DB()
-	if g == nil {
-		return nil, errors.New("db: DefaultSQLite is nil after InitSQLite")
+	g, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("db: open %s: %w", path, err)
 	}
 	if err := g.AutoMigrate(&EntryRow{}); err != nil {
 		return nil, fmt.Errorf("db: automigrate: %w", err)
 	}
-	return &DB{g: g, dbh: db.DefaultSQLite}, nil
+	return &DB{g: g}, nil
 }
 
 // Close releases the underlying SQLite connection.
-// Note: gosdk/db.DefaultSQLite is a singleton, so subsequent calls in the
-// same process will fail with "already initialized". For a single-shot CLI
-// this is fine; for daemon mode we'd need to refactor.
 func (d *DB) Close() error {
-	if d == nil || d.dbh == nil {
+	if d == nil || d.g == nil {
 		return nil
 	}
-	return d.dbh.Close()
+	sqlDB, err := d.g.DB()
+	if err != nil {
+		return fmt.Errorf("db: get sql.DB: %w", err)
+	}
+	return sqlDB.Close()
 }
 
 // Raw returns the underlying *gorm.DB for callers that need to issue ad-hoc
@@ -117,7 +112,7 @@ func (d *DB) LatestDate() (string, error) {
 }
 
 // UpsertEntries writes the given rows in a single transaction. Conflicts on
-// the (path, scan_date) primary key are replaced.
+// the (path, scan_date) primary key are replaced via INSERT OR REPLACE.
 //
 // Returns the number of rows actually written.
 func (d *DB) UpsertEntries(rows []EntryRow) (int, error) {
@@ -128,7 +123,6 @@ func (d *DB) UpsertEntries(rows []EntryRow) (int, error) {
 	if tx.Error != nil {
 		return 0, fmt.Errorf("db.UpsertEntries: begin tx: %w", tx.Error)
 	}
-	// Use a chunked CreateInBatches to avoid SQLite parameter limits.
 	const chunk = 500
 	written := 0
 	for i := 0; i < len(rows); i += chunk {
@@ -136,7 +130,16 @@ func (d *DB) UpsertEntries(rows []EntryRow) (int, error) {
 		if end > len(rows) {
 			end = len(rows)
 		}
-		if err := tx.CreateInBatches(rows[i:end], chunk).Error; err != nil {
+		// OnConflict with DoUpdates replaces existing rows that share the
+		// composite (path, scan_date) primary key.
+		batch := rows[i:end]
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "path"}, {Name: "scan_date"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"scan_ts", "size_bytes", "m_time_unix", "a_time_unix",
+				"category", "is_duplicate", "is_dir", "depth",
+			}),
+		}).CreateInBatches(batch, chunk).Error; err != nil {
 			tx.Rollback()
 			return written, fmt.Errorf("db.UpsertEntries: batch %d-%d: %w", i, end, err)
 		}

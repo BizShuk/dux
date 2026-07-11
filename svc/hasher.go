@@ -23,6 +23,15 @@ type HashOptions struct {
 	BufferSize  int   // streaming buffer for stage-3 (default 4MB)
 }
 
+// headerResult is an intermediate record passed from stage 2 to stage 3.
+// Package-level so fullHashGroup (separate method) can accept it.
+type headerResult struct {
+	path string
+	size int64
+	hash uint64
+	err  error
+}
+
 // Hasher holds config for a single DetectDuplicates call.
 type Hasher struct {
 	opts HashOptions
@@ -97,12 +106,6 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 	}
 
 	// Stage 2 — header hash (first HeaderBytes bytes).
-	type headerResult struct {
-		path  string
-		size  int64
-		hash  uint64
-		err   error
-	}
 	resultsCh := make(chan headerResult, len(sizeCollisionPaths))
 	g, gctx := errgroup.WithContext(ctx)
 	for _, p := range sizeCollisionPaths {
@@ -141,7 +144,9 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 
 	// Stage 3 — full hash for header-collision groups.
 	var finalGroups []DuplicateGroup
-	finalGroups = append(finalGroups, stage1Groups...) // size-only groups always reported
+	// Track which paths have been promoted to higher stages so we don't emit
+	// them again in stage 1.
+	promoted := make(map[string]bool)
 
 	// First emit header-only groups that are NOT going to stage 3 (groups of size 2 with distinct headers).
 	for hh, members := range byHeader {
@@ -161,6 +166,7 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 			paths := make([]string, len(members))
 			for i, m := range members {
 				paths[i] = m.path
+				promoted[m.path] = true
 			}
 			sort.Strings(paths)
 			finalGroups = append(finalGroups, DuplicateGroup{
@@ -173,7 +179,7 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 		}
 
 		// Stage 3 — full hash.
-		fullHashes, err := h.fullHashGroup(gctx, members)
+		pathHashes, err := h.fullHashGroup(ctx, members)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return finalGroups, err
@@ -181,7 +187,7 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 			return nil, err
 		}
 		byFull := make(map[uint64][]string)
-		for fh, path := range fullHashes {
+		for path, fh := range pathHashes {
 			byFull[fh] = append(byFull[fh], path)
 		}
 		for fh, paths := range byFull {
@@ -189,6 +195,9 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 				continue
 			}
 			sort.Strings(paths)
+			for _, p := range paths {
+				promoted[p] = true
+			}
 			finalGroups = append(finalGroups, DuplicateGroup{
 				Hash:  fh,
 				Size:  members[0].size,
@@ -201,9 +210,23 @@ func (h *Hasher) DetectDuplicates(ctx context.Context, candidates []Entry) ([]Du
 	// Filter out groups with < 2 paths (defensive — should not happen).
 	out := finalGroups[:0]
 	for _, g := range finalGroups {
-		if len(g.Paths) >= 2 {
-			out = append(out, g)
+		if len(g.Paths) < 2 {
+			continue
 		}
+		// Suppress stage-1 groups whose paths have all been promoted.
+		if g.Stage == 1 {
+			allPromoted := true
+			for _, p := range g.Paths {
+				if !promoted[p] {
+					allPromoted = false
+					break
+				}
+			}
+			if allPromoted {
+				continue
+			}
+		}
+		out = append(out, g)
 	}
 	return out, nil
 }
@@ -225,10 +248,10 @@ func readHeader(path string, n int) ([]byte, error) {
 }
 
 // fullHashGroup computes xxHash over the full content of each file in members.
-// Returns a map from hash → path. Files of differing sizes are filtered out
+// Returns a map from path → hash. Files of differing sizes are filtered out
 // upstream (size equality is required to reach stage 3).
-func (h *Hasher) fullHashGroup(ctx context.Context, members []headerResult) (map[uint64]string, error) {
-	out := make(map[uint64]string, len(members))
+func (h *Hasher) fullHashGroup(ctx context.Context, members []headerResult) (map[string]uint64, error) {
+	out := make(map[string]uint64, len(members))
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	for _, m := range members {
@@ -250,7 +273,7 @@ func (h *Hasher) fullHashGroup(ctx context.Context, members []headerResult) (map
 			}
 			fh := hasher.Sum64()
 			mu.Lock()
-			out[fh] = m.path
+			out[m.path] = fh
 			mu.Unlock()
 			return nil
 		})

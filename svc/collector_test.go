@@ -7,16 +7,15 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // openTestDB returns a DB backed by a fresh SQLite file in t.TempDir().
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
-	os.Setenv("SQLITE_PATH", path)
-	// Reset the singleton so each test gets a fresh connection.
-	// gosdk/db does not expose a Reset; in practice t.TempDir() makes paths
-	// unique and the prior singleton is closed by DB.Close().
+	viper.Set("SQLITE_PATH", path)
 	d, err := OpenDB(path)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
@@ -75,7 +74,6 @@ func TestCollector_CachedSizeHit(t *testing.T) {
 	c, _ := NewCollector(d, "2026-07-11")
 
 	dir := t.TempDir()
-	// Create a sub-dir and walk it to populate the DB.
 	sub := filepath.Join(dir, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -83,26 +81,22 @@ func TestCollector_CachedSizeHit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	c.AddDir(dir, 2, now, now, 0)
-	c.AddDir(sub, 2, now, now, 1)
-	c.AddFile(filepath.Join(sub, "f.txt"), 2, now, now, 2)
+	// Use a timestamp truncated to second precision so the DB row's
+	// MTimeUnix matches what the test's FileInfo reports back.
+	mtime := time.Now().Truncate(time.Second)
+	c.AddDir(dir, 2, mtime, mtime, 0)
+	c.AddDir(sub, 2, mtime, mtime, 1)
+	c.AddFile(filepath.Join(sub, "f.txt"), 2, mtime, mtime, 2)
 	if _, err := c.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	// Now look up the directory's cached size. We pass an os.FileInfo whose
-	// mtime matches what we wrote above.
-	info, err := os.Lstat(dir)
+	// Build a fake FileInfo with the exact mtime we persisted.
+	lstat, err := os.Lstat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The DB-stored mtime is in seconds; refresh info so ModTime() matches
-	// the precision we persisted.
-	info = &fileInfoFromStat{
-		FileInfo: info,
-		modTime:  now.Truncate(time.Second),
-	}
+	info := &fileInfoFromStat{FileInfo: lstat, modTime: mtime, sz: 2}
 	size, hit := c.CachedSize(dir, info)
 	if !hit {
 		t.Errorf("expected cache hit for %s, got miss", dir)
@@ -161,11 +155,14 @@ func TestCollector_Stats(t *testing.T) {
 	}
 }
 
-// fileInfoFromStat wraps os.FileInfo so tests can supply an arbitrary ModTime.
-// Embedding the original keeps all other accessors (Mode, IsDir, etc.) correct.
+// fileInfoFromStat wraps os.FileInfo so tests can supply an arbitrary ModTime
+// and Size. Embedding the original keeps all other accessors (Mode, IsDir, etc.)
+// correct.
 type fileInfoFromStat struct {
 	os.FileInfo
 	modTime time.Time
+	sz      int64
 }
 
 func (f *fileInfoFromStat) ModTime() time.Time { return f.modTime }
+func (f *fileInfoFromStat) Size() int64        { return f.sz }

@@ -1,23 +1,22 @@
 # TODO
 
-- [ ] 完成整合測試（在真實環境跑 fixture tree）
-- [ ] 完成 pm2 排程上線驗證
 - [ ] 增量快取實作（目前 v1 為簡化版，未真正比對 mtime 跳過子樹）
-- [ ] TUI 完整 tree view（目前 v1 為 flat list）
-- [ ] CSV section 拆分（每個 section 一個檔？目前一個檔多 section）
-- [ ] launchd + systemd 範本文件
-- [ ] **scan 已改寫為 du-based + CSV only**：show / diff / tui 仍依賴 SQLite，目前會回 "no scans in DB yet"，需要未來重作讓它們讀 CSV
 
 ## 1.x 功能
 
-- [ ] 支援讀寫 gz 壓縮 CSV
 - [ ] 支援自訂 exclude glob（目前只支援精確與子字串比對）
-- [ ] 支援 symlink cycle 偵測
-- [ ] 增加 `--diff-paths` flag 列出實際變動的路徑
 
 ## 觀測整合
 
-- [ ] 接入 Prometheus pull endpoint（目前只 push）
-- [ ] 整合 OTel trace（目前只有 metric + log）
+- [ ] show / diff / tui 重接 CSV 後，重新引入 VictoriaMetrics summary push（目前停用）
+
+## Infra
+
+- [ ] 把 `go build -o bin/disk-analyzer .` / `go test -race ./...` 包成 Makefile target？
+  （2026-07-12 決定**不**先補；待有跨平台需求再說）
 
 ## Archive
+
+- [x] pm2 排程從「週五 05:47」改為「每日 06:00」並修掉過期 cd path / dead flags / 缺 binary 三大 bug @2026-07-12_00:23:04 @Completed
+- [x] 完成 pm2 排程上線驗證 @2026-07-12_00:15:30 @Completed
+- [x] TUI 完整 tree view（目前 v1 為 flat list） @2026-07-12_00:15:17 @Completed

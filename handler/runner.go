@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bizshuk/dux/config"
 	"github.com/bizshuk/dux/svc"
@@ -82,10 +83,16 @@ func (r *Runner) RunShow(ctx context.Context, date string, prefix string) error 
 }
 
 // RunDiff compares two scan CSVs and prints the top growth paths.
+// Empty date1 defaults to yesterday; empty date2 defaults to today
+// (both in the user's local timezone).
 func (r *Runner) RunDiff(ctx context.Context, date1, date2 string, prefix string) error {
 	_ = ctx
-	if date1 == "" || date2 == "" {
-		return errors.New("diff: both --from and --to dates required")
+	now := time.Now()
+	if date2 == "" {
+		date2 = now.Format("2006-01-02")
+	}
+	if date1 == "" {
+		date1 = now.AddDate(0, 0, -1).Format("2006-01-02")
 	}
 	d1Rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date1+".csv"))
 	if err != nil {

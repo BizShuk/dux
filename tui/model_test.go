@@ -138,7 +138,7 @@ func TestRebuildFlat_RespectsExpansion(t *testing.T) {
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 		mkRow("/Users/shuk/Downloads", true, 3000, 1),
 	}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 
 	// Default: root expanded, everything else collapsed.
 	// Visible = root + its direct children = 3 rows.
@@ -177,7 +177,7 @@ func TestHandleExpand_MovesToFirstChild(t *testing.T) {
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 		mkRow("/Users/shuk/Downloads", true, 3000, 1),
 	}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	m.cursor = 0 // on root, which is expanded by default
 	m.handleExpand()
 	if m.cursor != 1 {
@@ -193,7 +193,7 @@ func TestHandleCollapse_MovesToParent(t *testing.T) {
 		mkRow("/Users/shuk/Documents", true, 2000, 1),
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 	}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	// Expand Documents so a.pdf is visible.
 	m.expanded["/Users/shuk/Documents"] = true
 	m.rebuildFlat()
@@ -220,7 +220,7 @@ func TestDelete_RefusesPrivacyPath(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(sensitive, false, 6, 2)}
-	m := NewModel(rows, false, []string{".ssh"})
+	m := NewModel(rows, nil, false, []string{".ssh"})
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 
@@ -240,7 +240,7 @@ func TestDelete_RefusesPrivacyPath(t *testing.T) {
 // to a real filesystem path).
 func TestDelete_RefusesRedactedPlaceholder(t *testing.T) {
 	rows := []svc.EntryRow{mkRow("<redacted:contains-private>", false, 1, 1)}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if !strings.Contains(m.statusMessage, "redacted placeholder") {
@@ -268,7 +268,7 @@ func TestDelete_RequestSetsPendingDelete(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 
@@ -304,7 +304,7 @@ func TestDelete_NonYKeyCancels(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if m.pendingDelete == nil {
@@ -343,7 +343,7 @@ func TestDelete_MovesFileToTrash(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, false, nil)
+	m := NewModel(rows, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if m.pendingDelete == nil {
@@ -366,5 +366,95 @@ func TestDelete_MovesFileToTrash(t *testing.T) {
 	}
 	if len(m.flat) != 0 {
 		t.Errorf("expected flat to be empty after delete, got %d rows", len(m.flat))
+	}
+}
+
+// TestPrevCol_NilMapReturnsEmpty verifies the diff column is suppressed
+// entirely when the caller doesn't supply yesterday's snapshot — keeping
+// the default view clean for users who run tui on a fresh install.
+func TestPrevCol_NilMapReturnsEmpty(t *testing.T) {
+	m := NewModel(nil, nil, false, nil)
+	if got := m.prevCol(&treeNode{path: "/foo", size: 1024}); got != "" {
+		t.Errorf("prevCol with nil map should return empty, got %q", got)
+	}
+}
+
+// TestPrevCol_NewFileShowsZeroArrow verifies the user-facing contract:
+// "if file is not existing before, then 0 -> <size>". A path missing
+// from yesterday's snapshot renders as "0 → <today>".
+func TestPrevCol_NewFileShowsZeroArrow(t *testing.T) {
+	prev := map[string]int64{"/Users/shuk/Documents": 2048}
+	m := NewModel(nil, prev, false, nil)
+	got := m.prevCol(&treeNode{path: "/Users/shuk/Downloads/new.zip", size: 4096})
+	want := "0 → 4.0KB"
+	if got != want {
+		t.Errorf("new file should render as %q, got %q", want, got)
+	}
+}
+
+// TestPrevCol_ExistingFileShowsPrevArrow verifies that paths present in
+// yesterday's snapshot render as "<yesterday> → <today>", with both
+// sides formatted via svc.FormatBytes (1024-base).
+func TestPrevCol_ExistingFileShowsPrevArrow(t *testing.T) {
+	prev := map[string]int64{"/Users/shuk/Documents/report.pdf": 5 * 1024 * 1024}
+	m := NewModel(nil, prev, false, nil)
+	got := m.prevCol(&treeNode{path: "/Users/shuk/Documents/report.pdf", size: 8 * 1024 * 1024})
+	want := "5.0MB → 8.0MB"
+	if got != want {
+		t.Errorf("existing file should render as %q, got %q", want, got)
+	}
+}
+
+// TestRenderRow_DeletedFileDisappears verifies the second half of the user
+// contract: files that existed yesterday but not today simply do not render.
+// The tree is built from today's rows, so a yesterday-only path is invisible.
+func TestRenderRow_DeletedFileDisappears(t *testing.T) {
+	// Today has only one path; yesterday had a different one.
+	today := []svc.EntryRow{mkRow("/Users/shuk/Documents", true, 1000, 0)}
+	yesterday := map[string]int64{"/Users/shuk/OldStuff/deleted.zip": 9999}
+	m := NewModel(today, yesterday, false, nil)
+
+	var saw strings.Builder
+	for i := range m.flat {
+		saw.WriteString(m.renderRow(i))
+	}
+	if strings.Contains(saw.String(), "deleted.zip") {
+		t.Errorf("deleted file from yesterday should not appear; flat: %q", saw.String())
+	}
+	if strings.Contains(saw.String(), "9999") {
+		t.Errorf("yesterday's size should not appear; flat: %q", saw.String())
+	}
+}
+
+// TestRenderRow_IncludesDiffColumn verifies end-to-end that when a prev
+// snapshot is loaded the size column collapses to the unified
+// "<prev> → <today>" form so the user can read yesterday-vs-today
+// growth in one column.
+func TestRenderRow_IncludesDiffColumn(t *testing.T) {
+	today := []svc.EntryRow{mkRow("/Users/shuk/Downloads/file.bin", false, 4096, 1)}
+	yesterday := map[string]int64{"/Users/shuk/Downloads/file.bin": 1024}
+	m := NewModel(today, yesterday, false, nil)
+
+	out := m.renderRow(0)
+	if !strings.Contains(out, "1.0KB → 4.0KB") {
+		t.Errorf("expected unified %q in renderRow output, got %q", "1.0KB → 4.0KB", out)
+	}
+	// Standalone today-size alone (without the prev prefix) should NOT
+	// appear — the column is fully replaced by the unified form.
+	if strings.Contains(out, "    4.0KB    ") {
+		t.Errorf("standalone today size should not be duplicated, got %q", out)
+	}
+}
+
+// TestRenderRow_OmitsDiffColumnWhenNoPrev verifies that without a
+// yesterday snapshot the row renders identically to the pre-feature format
+// (no trailing arrow column).
+func TestRenderRow_OmitsDiffColumnWhenNoPrev(t *testing.T) {
+	today := []svc.EntryRow{mkRow("/Users/shuk/Downloads/file.bin", false, 4096, 1)}
+	m := NewModel(today, nil, false, nil)
+
+	out := m.renderRow(0)
+	if strings.Contains(out, "→") {
+		t.Errorf("no-prev row must not contain arrow, got %q", out)
 	}
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/bizshuk/dux/config"
 	"github.com/bizshuk/dux/handler"
@@ -53,7 +54,20 @@ var TuiCmd = &cobra.Command{
 			return errors.New("tui: config not initialized")
 		}
 
-		m := tui.NewModel(rows, tuiAllowMark, cfg.PrivacyRedactPaths)
+		// Build yesterday's path → size snapshot for the diff column.
+		// If yesterday's CSV is missing we silently drop the diff column
+		// rather than poisoning every row with "0 →" (which would mislead
+		// the user into thinking every file was newly created).
+		var prevSizes map[string]int64
+		yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+		if yRows, yerr := r.ReadDate(yesterday); yerr == nil && len(yRows) > 0 {
+			prevSizes = make(map[string]int64, len(yRows))
+			for _, y := range yRows {
+				prevSizes[y.Path] = y.SizeBytes
+			}
+		}
+
+		m := tui.NewModel(rows, prevSizes, tuiAllowMark, cfg.PrivacyRedactPaths)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("tui: program: %w", err)

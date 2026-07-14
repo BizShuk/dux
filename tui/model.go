@@ -48,6 +48,11 @@ type treeItem struct {
 //   - expanded:  path -> bool; defaults to "all roots expanded, everything else collapsed"
 //   - flat:      derived from roots+expanded by rebuildFlat()
 //   - pendingDelete: non-nil while awaiting a `y` confirmation for trash
+//   - prevSizes: optional path -> yesterday's byte size; when non-nil, the
+//     size column collapses into "<prev> → <today>" so growth is read in
+//     one place. Paths missing from yesterday render as "0 → <today>"
+//     (new files). Files that existed yesterday but not today are
+//     simply not displayed — they were never in rows to begin with.
 //
 // Cursor is an index into flat. Marked-set is path -> bool.
 type Model struct {
@@ -65,8 +70,9 @@ type Model struct {
 	quitting         bool
 	allowMark        bool
 	privacyRedactSet map[string]bool // lowercase substrings from cfg.privacy_redact_paths; delete refuses any match
-	statusMessage    string          // transient message shown in the status bar after a destructive op
-	pendingDelete    *treeNode       // non-nil when waiting for `y` to confirm trash
+	prevSizes        map[string]int64
+	statusMessage    string // transient message shown in the status bar after a destructive op
+	pendingDelete    *treeNode // non-nil when waiting for `y` to confirm trash
 }
 
 // NewModel constructs a Model from a full set of DB rows for one scan date.
@@ -78,7 +84,12 @@ type Model struct {
 //
 // privacyRedactPaths is the cfg.privacy_redact_paths list — substrings that
 // delete refuses to move to Trash (safety net for .ssh / .aws / .gnupg / etc).
-func NewModel(rows []svc.EntryRow, allowMark bool, privacyRedactPaths []string) *Model {
+//
+// prevSizes is yesterday's path → byte-size snapshot. Pass nil to disable
+// the diff column; when non-nil the view appends "<prev> →" to each row so
+// growth is visible at a glance. Paths missing from the snapshot render as
+// "0 →" (i.e. they were not present yesterday).
+func NewModel(rows []svc.EntryRow, prevSizes map[string]int64, allowMark bool, privacyRedactPaths []string) *Model {
 	roots := buildTree(rows)
 	expanded := make(map[string]bool, len(roots))
 	for _, r := range roots {
@@ -102,6 +113,7 @@ func NewModel(rows []svc.EntryRow, allowMark bool, privacyRedactPaths []string) 
 		styles:           DefaultStyles(),
 		allowMark:        allowMark,
 		privacyRedactSet: redactSet,
+		prevSizes:        prevSizes,
 	}
 	m.rebuildFlat()
 	return m

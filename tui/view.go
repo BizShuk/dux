@@ -95,10 +95,18 @@ func (m *Model) renderList() string {
 
 // renderRow renders one treeItem. Layout:
 //
-//	[indent][fold][name...]   [size]
+//	[indent][fold][name...]   [size]                       (no prev data)
+//	[indent][fold][name...]   [<prev> → <today>]           (with prev data)
 //
 // indent = 2 spaces * depth
 // fold   = ▼ / ▶ / · / space
+//
+// When prevSizes is loaded the size column collapses into a single
+// "<prev> → <today>" form so the user reads growth in one place instead
+// of scanning two columns. New files (no yesterday entry) render with the
+// left side fixed at "0" — i.e. "0 → <today>" — matching the user-facing
+// convention. Paths that existed yesterday but not today are simply
+// absent from rows, so they don't render at all.
 func (m *Model) renderRow(idx int) string {
 	item := m.flat[idx]
 	n := item.node
@@ -125,16 +133,40 @@ func (m *Model) renderRow(idx int) string {
 		name = n.path
 	}
 
-	// Highlight the cursor row using the lipgloss cursor style; everything
-	// else is just plain text. We avoid color-coding marked/dup/cold to
-	// keep the tree visually clean; indicators go in the right-side column.
-	size := m.styles.Size.Render(svc.FormatBytes(n.size))
-	row := fmt.Sprintf("%s%s %s    %s", indent, fold, name, size)
+	// Size column: either the bare today value or the unified
+	// "<prev> → <today>" form when yesterday's snapshot was loaded.
+	// The diff suppresses the column entirely when no prev map is set,
+	// keeping the default view identical to the pre-feature layout.
+	sizeCell := m.styles.Size.Render(svc.FormatBytes(n.size))
+	if prev := m.prevCol(n); prev != "" {
+		sizeCell = m.styles.Size.Render(prev)
+	}
+	row := fmt.Sprintf("%s%s %s    %s", indent, fold, name, sizeCell)
 
 	if idx == m.cursor {
 		return m.styles.Cursor.Render(row)
 	}
 	return row
+}
+
+// prevCol returns the size-column text when a yesterday snapshot is loaded,
+// or "" to signal "fall back to bare today-size". For paths not present in
+// yesterday's snapshot the left side of the arrow is fixed at "0", so
+// new files render as "0 → <today>" and existing files render as
+// "<yesterday> → <today>". Both ends use svc.FormatBytes (1024-base).
+//
+// Kept as a method (rather than inlined) so the rendering rule is testable
+// without standing up the whole tea program.
+func (m *Model) prevCol(n *treeNode) string {
+	if n == nil || m.prevSizes == nil {
+		return ""
+	}
+	today := svc.FormatBytes(n.size)
+	prev, ok := m.prevSizes[n.path]
+	if !ok {
+		return "0 → " + today
+	}
+	return svc.FormatBytes(prev) + " → " + today
 }
 
 // cursorSummary is a short "what is the cursor on" label for the status bar

@@ -166,8 +166,8 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		// because du does not expose atime; CSV consumers can interpret it as
 		// "most recent activity observed in the subtree" for directories.
 		//
-		// All entries (including depth-0 = $HOME root) are written so the TUI
-		// has a tree root to anchor. `du`'s shouldEmit applies the size threshold
+		// All entries (including each depth-0 root) are written so the TUI has
+		// tree roots to anchor. `du`'s shouldEmit applies the size threshold
 		// uniformly, so entries below threshold are already absent.
 		rows := make([]svc.ReportEntry, 0, len(entries))
 		for _, e := range entries {

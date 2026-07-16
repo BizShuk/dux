@@ -7,8 +7,10 @@
 `dux` 是給 macOS/Linux 桌面使用者用的單次深度磁碟分析工具，每日 06:00 由 pm2 排程觸發。產出：
 
 - **CSV 報表**：每個掃描日寫入 `~/.config/dux/data/YYYY-MM-DD.csv`，
-  列出 `$HOME` 下 ≥ 200MB 的檔案與資料夾（依 size desc 排序）
-- 當前 v1 範圍：單一 `breakdown-home` section；其他 section / 去重 / 冷資料 / TUI 互動瀏覽已不在主路徑
+  列出 `$HOME`、`/tmp`、`/var`、`/Applications`、`/usr` 下 ≥ 200MB 的檔案與資料夾
+  （依 size desc 排序）
+- 當前 v1 範圍：為相容既有 CSV consumer，合併結果仍使用單一 `breakdown-home` section；
+  其他 section / 去重 / 冷資料 / TUI 互動瀏覽已不在主路徑
 
 > v1 簡化版後 `show` / `diff` / `tui` 暫時無新資料可讀（仍依賴 SQLite `entries` 表，
 > 而 scan 已不再寫入）；見 `README.todo` 的追蹤項目。
@@ -18,7 +20,7 @@
 | 工具           | 模式                                       | 用途                                            |
 | -------------- | ------------------------------------------ | ----------------------------------------------- |
 | `file_watcher` | 長期 daemon（排程監控 + 定期 flush stats） | 追蹤 watch_list 下的檔案數量/大小**增長趨勢**   |
-| `dux`          | 單次觸發（每日 06:00 pm2 cron）            | 給出**當前** `$HOME` 磁碟使用全貌（CSV 給人看） |
+| `dux`          | 單次觸發（每日 06:00 pm2 cron）            | 給出**當前**五個預設 roots 的磁碟使用全貌（CSV 給人看） |
 
 兩個工具職責互補：file_watcher 回答「過去 N 天哪些路徑在長大」，
 dux 回答「現在哪些東西可以清掉」。
@@ -31,10 +33,16 @@ pm2 cron (每日 06:00)
         ▼
    dux scan
         │
-        ├─► du.Usage: 並行 walk $HOME  ── (errgroup + semaphore in du/walk.go)
-        │      │
-        │      ├─ shouldEmit 過濾 depth=0 + threshold (default 200MB)
-        │      └─ exclude.go 子字串比對 (node_modules / .git / .venv ...)
+        ├─► 5 goroutines × du.Usage
+        │      ├─ $HOME
+        │      ├─ /tmp
+        │      ├─ /var
+        │      ├─ /Applications
+        │      └─ /usr
+        │         ├─ 每個 root 內以 depth-first walk 掃描
+        │         ├─ shouldEmit 過濾 depth=0 + threshold (default 200MB)
+        │         ├─ exclude.go 套用 glob excludes
+        │         └─ root 失敗只記 warning；保留其他成功結果
         │
         ├─► svc: map du.EntryInfo → ReportEntry
         │      └─ sort.Slice by Size desc
@@ -52,7 +60,7 @@ pm2 cron (每日 06:00)
 go build -o bin/dux .
 
 # 2. 跑一次掃描（會覆寫當日 CSV）
-./bin/dux scan                       # 預設 ≥ 200MB
+./bin/dux scan                       # 五個預設 roots 並行掃描，預設 ≥ 200MB
 ./bin/dux scan --min-size 500MB      # 自訂門檻
 ./bin/dux scan --date 2026-07-11     # 指定日期檔名
 

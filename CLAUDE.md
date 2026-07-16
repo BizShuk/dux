@@ -9,7 +9,7 @@ dux/
 ├── main.go                  # entrypoint (config.Default + cmd.Execute)
 ├── config/                  # gosdk config 整合 + Settings struct
 ├── cmd/                     # cobra sub-commands (scan / show / diff / tui / version)
-├── du/                      # 並行 walk（核心 scan pipeline）
+├── du/                      # 單 root depth-first walk（核心 scan engine）
 │   ├── du.go                # public API: Usage() + Options
 │   ├── walk.go              # filepath.WalkDir 變體 + shouldEmit
 │   ├── exclude.go           # glob exclude (bmatcuk/doublestar；支援 ** / * / basename)
@@ -26,7 +26,7 @@ dux/
 ```
 
 > 2026-07-12 重構後：`svc/scanner.go` / `collector.go` / `hasher.go` / `metrics.go`
-> 已刪除；scan pipeline 改走 `du.Usage()` → sort → CSV only。
+> 已刪除；scan pipeline 改走 `scanAllRoots()` → 每 root 一次 `du.Usage()` → merge → sort → CSV only。
 
 ## 設計原則
 
@@ -38,6 +38,8 @@ dux/
 4. **隱私預設開啟**：`privacy_redact_paths` 黑名單；`tui` 顯示為 `<redacted>`
 5. **不做 hard delete**：TUI 只能 mark
 6. **Symbol MixedCaps**；const SCREAMING_SNAKE_CASE（gosdk 慣例）
+7. **多 root 並行**：`scan` 固定掃描 `$HOME`、`/tmp`、`/var`、`/Applications`、`/usr`；
+   每個 root 一個 goroutine，單一 root 失敗不阻斷其他成功結果
 
 ## 關鍵決策
 

@@ -30,12 +30,58 @@ var (
 	scanExcludeFrom string
 )
 
+type scanUsageFunc func(context.Context, du.Options) (*du.Result, error)
+
+type rootScanResult struct {
+	root   string
+	result *du.Result
+	err    error
+}
+
+func defaultScanRoots(home string) []string {
+	return []string{home, "/tmp", "/var", "/Applications", "/usr"}
+}
+
+func scanAllRoots(
+	ctx context.Context,
+	roots []string,
+	opts du.Options,
+	usage scanUsageFunc,
+) ([]du.EntryInfo, int, error) {
+	results := make(chan rootScanResult, len(roots))
+	for _, root := range roots {
+		go func() {
+			rootOpts := opts
+			rootOpts.Paths = []string{root}
+			result, err := usage(ctx, rootOpts)
+			results <- rootScanResult{root: root, result: result, err: err}
+		}()
+	}
+
+	var entries []du.EntryInfo
+	failures := 0
+	for range roots {
+		scanned := <-results
+		if scanned.err != nil {
+			failures++
+			slog.Warn("scan: root failed", "root", scanned.root, "error", scanned.err)
+			continue
+		}
+		entries = append(entries, scanned.result.Entries...)
+	}
+	if failures == len(roots) {
+		return nil, failures, fmt.Errorf("scan: all %d roots failed", failures)
+	}
+	return entries, failures, nil
+}
+
 var ScanCmd = &cobra.Command{
 	Use:   "scan",
-	Short: "Walk $HOME with du and write entries ≥ threshold to CSV",
-	Long: `Run a disk-usage scan rooted at the user's home directory and persist
-the entries that meet the size threshold (default 200MB) to a CSV file under
-the configured CSV directory. The CSV uses the v2 schema:
+	Short: "Walk default filesystem roots and write entries ≥ threshold to CSV",
+	Long: `Run concurrent disk-usage scans rooted at $HOME, /tmp, /var,
+/Applications, and /usr, then persist entries that meet the size threshold
+(default 200MB) to a CSV file under the configured CSV directory. The CSV uses
+the v2 schema:
 
   path,is_dir,depth,size,change_size,is_duplicate,last_accessed,category
 
@@ -63,6 +109,7 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		if err != nil {
 			return fmt.Errorf("scan: home dir: %w", err)
 		}
+		roots := defaultScanRoots(home)
 
 		date := scanDate
 		if date == "" {
@@ -96,7 +143,6 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		}
 
 		duOpts := du.Options{
-			Paths:       []string{home},
 			AllFiles:    true,        // emit both files and directories
 			Threshold:   threshold,   // positive value → exclude entries smaller than this
 			MaxDepth:    math.MaxInt, // -1 in du.Options = unlimited; 0 would mean "summarize only"
@@ -104,15 +150,16 @@ so it can be ingested by spreadsheets, scripts, or the dux
 			ExcludeFrom: excludeFrom,
 		}
 
-		slog.Info("scan: starting du walk",
-			"root", home,
+		slog.Info("scan: starting du walks",
+			"roots", roots,
+			"root_count", len(roots),
 			"threshold_bytes", threshold,
 			"threshold_human", svc.FormatBytes(threshold),
 		)
 
-		result, err := du.Usage(ctx, duOpts)
+		entries, failedRoots, err := scanAllRoots(ctx, roots, duOpts, du.Usage)
 		if err != nil {
-			return fmt.Errorf("scan: du: %w", err)
+			return err
 		}
 
 		// Map du.EntryInfo → svc.ReportEntry. LastAccessed carries MaxTime (mtime)
@@ -122,8 +169,8 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		// All entries (including depth-0 = $HOME root) are written so the TUI
 		// has a tree root to anchor. `du`'s shouldEmit applies the size threshold
 		// uniformly, so entries below threshold are already absent.
-		rows := make([]svc.ReportEntry, 0, len(result.Entries))
-		for _, e := range result.Entries {
+		rows := make([]svc.ReportEntry, 0, len(entries))
+		for _, e := range entries {
 			rows = append(rows, svc.ReportEntry{
 				Path:         e.Path,
 				IsDir:        e.IsDir,
@@ -136,10 +183,9 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		// Sort by size desc so the largest offenders surface first in the CSV.
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Size > rows[j].Size })
 
-		// Wrap into a single ReportSection. We use SectionBreakdownHome because
-		// (a) we are scanning $HOME and (b) the section name is stable across
-		// CSV consumers. No overview/duplicate/cold sections are produced — that
-		// is intentional given the simplified scope.
+		// Keep the legacy SectionBreakdownHome name because it is stable across
+		// CSV consumers, even though the section now combines all default roots.
+		// No overview/duplicate/cold sections are produced.
 		b := svc.NewReportBuilder()
 		b.Set(svc.SectionBreakdownHome, rows)
 		sections := b.Sections()
@@ -153,6 +199,8 @@ so it can be ingested by spreadsheets, scripts, or the dux
 			len(rows), svc.FormatBytes(threshold), csvPath)
 		slog.Info("scan complete",
 			"entries", len(rows),
+			"successful_roots", len(roots)-failedRoots,
+			"failed_roots", failedRoots,
 			"threshold_bytes", threshold,
 			"csv", csvPath,
 		)

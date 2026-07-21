@@ -77,7 +77,6 @@ var TuiCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.AddCommand(TuiCmd)
 	TuiCmd.Flags().StringVar(&tuiDate, "date", "",
 		"scan date to load (default: latest scan CSV)")
 	TuiCmd.Flags().BoolVar(&tuiAllowMark, "allow-mark", false,

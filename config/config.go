@@ -99,7 +99,7 @@ func (s *Settings) validate() error {
 	}
 	s.DataDir = dataDir
 	s.CSVDir = dataDir
-	s.LogDir = config.GetAppLogDir()
+	s.LogDir = config.GetAppLogsDir()
 	if err := os.MkdirAll(s.DataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir %s: %w", s.DataDir, err)
 	}

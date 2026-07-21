@@ -6,9 +6,9 @@
 
 ```
 dux/
-├── main.go                  # entrypoint (config.Default + cmd.Execute)
+├── main.go                  # composition root (config.Default + RootCmd + gosdk config cmd)
 ├── config/                  # gosdk config 整合 + Settings struct
-├── cmd/                     # cobra sub-commands (scan / show / diff / tui / version)
+├── cmd/                     # exported cobra commands（du / scan / show / diff / tui / version）
 ├── du/                      # 單 root depth-first walk（核心 scan engine）
 │   ├── du.go                # public API: Usage() + Options
 │   ├── walk.go              # filepath.WalkDir 變體 + shouldEmit
@@ -45,7 +45,8 @@ dux/
 
 - **拒絕 `gosdk/statestore`**：改用 `gosdk/db` (SQLite via gorm)；目前 `entries` 表僅供向後相容
 - **拒絕 `gosdk/parallel`**：手動 `errgroup` + `golang.org/x/sync/semaphore`（在 `du/walk.go`）
-- **拒絕 `gosdk/cli`**：手動 cobra
+- `Cobra composition root 在 main.go`：`cmd/*.go` 只宣告 exported command var，
+  `init()` 只綁 flags；root 統一註冊 domain commands 與 `gosdk/cmd.ConfigCmd`
 - **拒絕 `gosdk/process` 守護**：排程由 pm2 處理
 - **scan 不推 VictoriaMetrics**：v1 簡化版移除 `BufferedMetric`；觀測只剩 slog → stdout
 - **CSV BOM**：加 `\xEF\xBB\xBF` 給 Excel；防禦性 UTF-8 sanitize（無效位元組換 `?`）
@@ -53,8 +54,10 @@ dux/
 
 ## gosdk 整合
 
+- `github.com/bizshuk/gosdk v1.2.7`
 - `config.Default(WithAppName("dux"))` — 設定載入 + 自動建立 `~/.config/dux/`
-- `db.InitSQLite()` — singleton；`SQLITE_PATH` 在 `config.Default()` 之後用 `viper.Set` 設定
+- `gosdk/cmd.ConfigCmd` — `dux config` 顯示 merged config；變更預設寫 `settings.local.json`
+- `GetAppDataDir()` / `GetAppLogsDir()` — 固定衍生 data / logs 目錄
 - `log` 是 `log/slog` 標準介面，env `LOG_LEVEL` / `LOG_FORMAT` 控制
 
 ## 排程

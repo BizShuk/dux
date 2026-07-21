@@ -64,15 +64,22 @@ go build -o bin/dux .
 ./bin/dux scan --min-size 500MB      # 自訂門檻
 ./bin/dux scan --date 2026-07-11     # 指定日期檔名
 
-# 3. 註冊 pm2（每日 06:00 觸發）
+# 3. 檢視或修改設定
+./bin/dux config
+./bin/dux config --source
+./bin/dux config --update top_n=20
+./bin/dux config --append excludes=node_modules
+
+# 4. 註冊 pm2（每日 06:00 觸發）
 pm2 start ecosystem.config.js
 pm2 save                  # 重要：persist cron 到 ~/.pm2/dump.json
 
-# 4. 確認排程已 persist
+# 5. 確認排程已 persist
 pm2 list | grep dux
 ```
 
-CLI flag 列表：`scan --help` 即可（`--date` / `--min-size` / `--top` 保留 / `--progress` 預留）。
+CLI flag 列表：`scan --help` 即可（`--date` / `--min-size` / `--top` 保留 / `--progress` 預留）；
+設定檔操作見 `config --help`。
 詳細部署見 [docs/daemon.md](docs/daemon.md)（pm2 / launchd / systemd 三方案）。
 
 ## 設定
@@ -98,13 +105,19 @@ CLI flag 列表：`scan --help` 即可（`--date` / `--min-size` / `--top` 保�
 ```
 
 完整預設值見 `config/default_settings.json`。
-`DataDir` / `LogDir` / `SQLitePath` / `CSVDir` 由 `gosdk` 推導，不在 JSON 內。
+`DataDir` / `LogDir` / `CSVDir` 由 `gosdk` 推導，不在 JSON 內。
+
+`dux config` 由 `gosdk/cmd.ConfigCmd` 提供：無 flags 時顯示 merge 後設定，
+`--source` 顯示來源；`--update` / `--append` / `--remove-from` / `--delete`
+預設寫入 `~/.config/dux/settings.local.json`，不覆寫 embedded defaults 建立的
+`settings.json`。
 
 ## 輸出位置
 
 | 路徑                                | 用途                                                          |
 | ----------------------------------- | ------------------------------------------------------------- |
 | `~/.config/dux/settings.json`       | 使用者設定（首跑自動建立）                                    |
+| `~/.config/dux/settings.local.json` | `dux config` 預設寫入的高優先序覆寫設定                       |
 | `~/.config/dux/data/YYYY-MM-DD.csv` | 當日 CSV 報表（含 BOM + section 註解）                        |
 | `~/.config/dux/data/history.db`     | SQLite — 殘留供 `show` / `diff` / `tui` 讀，**scan 不再寫入** |
 | `~/.config/dux/logs/`               | pm2 stdout/stderr（`dux.{out,err}.log`）                      |

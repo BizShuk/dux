@@ -27,7 +27,6 @@ var ShowCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.AddCommand(ShowCmd)
 	ShowCmd.Flags().StringVar(&showDate, "date", "",
 		"scan date (YYYY-MM-DD, default: latest scan CSV)")
 	ShowCmd.Flags().StringVar(&showPrefix, "prefix", "",

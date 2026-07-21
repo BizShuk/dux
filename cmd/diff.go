@@ -28,7 +28,6 @@ var DiffCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.AddCommand(DiffCmd)
 	DiffCmd.Flags().StringVar(&diffFrom, "from", "", "earlier scan date (YYYY-MM-DD, default: yesterday)")
 	DiffCmd.Flags().StringVar(&diffTo, "to", "", "later scan date (YYYY-MM-DD, default: today)")
 	DiffCmd.Flags().StringVar(&diffPrefix, "prefix", "", "filter entries by path prefix")

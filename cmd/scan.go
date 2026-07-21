@@ -209,7 +209,6 @@ so it can be ingested by spreadsheets, scripts, or the dux
 }
 
 func init() {
-	RootCmd.AddCommand(ScanCmd)
 	ScanCmd.Flags().StringVar(&scanDate, "date", "", "scan date (YYYY-MM-DD, default: today)")
 	ScanCmd.Flags().StringVar(&scanMinSize, "min-size", "200MB",
 		"minimum size for inclusion in the CSV (e.g. 200MB, 1GB)")

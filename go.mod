@@ -3,7 +3,7 @@ module github.com/bizshuk/dux
 go 1.26.0
 
 require (
-	github.com/bizshuk/gosdk v1.1.0
+	github.com/bizshuk/gosdk v1.2.7
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/bubbletea v1.3.5
 	github.com/charmbracelet/lipgloss v1.1.0

@@ -139,8 +139,6 @@ func humanSize(b uint64) string {
 }
 
 func init() {
-	RootCmd.AddCommand(DuCmd)
-
 	DuCmd.Flags().BoolVarP(&duAllFiles, "all", "a", false,
 		"write counts for all files, not just directories")
 	DuCmd.Flags().BoolVarP(&duApparent, "apparent-size", "A", false,

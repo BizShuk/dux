@@ -1,32 +1,47 @@
 // dux — high-performance disk usage analyzer.
-//
-// Single-shot CLI driven by cobra sub-commands:
-//
-//	scan    perform a full scan + write CSV/DB + emit metrics
-//	show    display a past scan
-//	diff    compare two scans
-//	tui     launch the interactive tree browser
-//	version print version
-//
-// Architecture follows the file_watcher convention:
-//   - config.Default() bootstraps gosdk settings
-//   - cmd/*.go declares one cobra command per file with init() self-registration
-//   - handler.Wire() builds a Runner with all dependencies
-//   - svc/ holds domain types and operations
-//   - tui/ holds the bubbletea-based interactive shell
 package main
 
 import (
-	"github.com/bizshuk/dux/cmd"
-	"github.com/bizshuk/dux/config"
+	"fmt"
+	"os"
+
+	appcmd "github.com/bizshuk/dux/cmd"
+	appconfig "github.com/bizshuk/dux/config"
+	gosdkcmd "github.com/bizshuk/gosdk/cmd"
+	"github.com/spf13/cobra"
 )
 
+// RootCmd is the executable's cobra composition root. Reusable commands live
+// in cmd/, while the host application decides which commands to expose.
+var RootCmd = &cobra.Command{
+	Use:   "dux",
+	Short: "High-performance disk usage analyzer with TUI + observability",
+	Long: `dux — single-shot disk analysis with concurrent scanning and CSV export.
+
+Use 'scan' for a full scan, 'show' to view a past scan, 'diff' to compare
+two dates, 'tui' to launch the interactive tree browser, and 'config' to
+inspect or update application configuration.`,
+}
+
+func init() {
+	RootCmd.AddCommand(
+		appcmd.DiffCmd,
+		appcmd.DuCmd,
+		appcmd.ScanCmd,
+		appcmd.ShowCmd,
+		appcmd.TuiCmd,
+		appcmd.VersionCmd,
+		gosdkcmd.ConfigCmd,
+	)
+}
+
 func main() {
-	if err := config.Default(); err != nil {
-		// Fall back to a minimal root so cobra still prints help.
-		// This preserves the convention from file_watcher/cmd/monitor.go.
-		cmd.Execute()
-		return
+	if err := appconfig.Default(); err != nil {
+		// Continue so cobra can still print help and expose the config command.
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 	}
-	cmd.Execute()
+	if err := RootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

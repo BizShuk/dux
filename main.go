@@ -7,7 +7,6 @@ import (
 
 	appcmd "github.com/bizshuk/dux/cmd"
 	appconfig "github.com/bizshuk/dux/config"
-	gosdkcmd "github.com/bizshuk/gosdk/cmd"
 	"github.com/spf13/cobra"
 )
 
@@ -30,8 +29,6 @@ func init() {
 		appcmd.ScanCmd,
 		appcmd.ShowCmd,
 		appcmd.TuiCmd,
-		appcmd.VersionCmd,
-		gosdkcmd.ConfigCmd,
 	)
 }
 

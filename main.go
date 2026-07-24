@@ -6,6 +6,7 @@ import (
 	"os"
 
 	appcmd "github.com/bizshuk/dux/cmd"
+	cmddelete "github.com/bizshuk/dux/cmd/delete"
 	appconfig "github.com/bizshuk/dux/config"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,7 @@ inspect or update application configuration.`,
 
 func init() {
 	RootCmd.AddCommand(
+		cmddelete.Cmd,
 		appcmd.DiffCmd,
 		appcmd.DuCmd,
 		appcmd.ScanCmd,

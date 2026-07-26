@@ -22,6 +22,13 @@ func TestExpandPath(t *testing.T) {
 	assert.Equal(t, "/tmp/foo", ExpandPath("/tmp/foo"))
 }
 
+func TestDefaultTargetsIncludeAntigravityIDELogs(t *testing.T) {
+	assert.Contains(t, DefaultTargets, TargetItem{
+		Path:        "$HOME/Library/Application Support/Antigravity IDE/logs",
+		Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)",
+	})
+}
+
 func TestFormatFullCmd(t *testing.T) {
 	assert.Equal(t, `rm -rf "/tmp/foo"`, FormatFullCmd("/tmp/foo"))
 }

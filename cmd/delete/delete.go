@@ -28,6 +28,7 @@ var DefaultTargets = []TargetItem{
 	{Path: "$HOME/Library/Developer/Xcode/DeviceLogs", Description: "Xcode DeviceLogs (裝置日誌 / Device logs)"},
 	{Path: "$HOME/Library/Developer/Xcode/iOS DeviceSupport", Description: "Xcode iOS DeviceSupport (裝置支援檔 / iOS device support)"},
 	{Path: "$HOME/Library/Developer/Xcode/UserData", Description: "Xcode UserData (使用者自訂設定與範本 / Xcode user data)"},
+	{Path: "$HOME/Library/Application Support/Antigravity IDE/logs", Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)"},
 }
 
 // ExpandPath replaces $HOME or ~ with the user's home directory.

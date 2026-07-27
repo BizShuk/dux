@@ -9,22 +9,25 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mitchellh/go-homedir"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestExpandPath(t *testing.T) {
-	home, err := os.UserHomeDir()
+func TestExecuteListExpandsHomePath(t *testing.T) {
+	home, err := homedir.Dir()
 	require.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(home, "Library/Developer/Xcode"), ExpandPath("$HOME/Library/Developer/Xcode"))
-	assert.Equal(t, filepath.Join(home, "Library/Developer/Xcode"), ExpandPath("~/Library/Developer/Xcode"))
-	assert.Equal(t, "/tmp/foo", ExpandPath("/tmp/foo"))
+	target := TargetItem{Path: "~/dux-home-expansion-test", Description: "Home path"}
+	envTarget := TargetItem{Path: "$HOME/dux-home-expansion-test", Description: "Environment home path"}
+	var out bytes.Buffer
+	require.NoError(t, ExecuteList(context.Background(), &out, []TargetItem{target, envTarget}))
+	assert.Contains(t, out.String(), filepath.Join(home, "dux-home-expansion-test"))
 }
 
 func TestDefaultTargetsIncludeAntigravityIDELogs(t *testing.T) {
 	assert.Contains(t, DefaultTargets, TargetItem{
-		Path:        "$HOME/Library/Application Support/Antigravity IDE/logs",
+		Path:        "~/Library/Application Support/Antigravity IDE/logs",
 		Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)",
 	})
 }

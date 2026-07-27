@@ -7,12 +7,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/bizshuk/dux/du"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -24,27 +24,11 @@ type TargetItem struct {
 }
 
 var DefaultTargets = []TargetItem{
-	{Path: "$HOME/Library/Developer/Xcode/DerivedData", Description: "Xcode DerivedData (建置快取 / Build cache)"},
-	{Path: "$HOME/Library/Developer/Xcode/DeviceLogs", Description: "Xcode DeviceLogs (裝置日誌 / Device logs)"},
-	{Path: "$HOME/Library/Developer/Xcode/iOS DeviceSupport", Description: "Xcode iOS DeviceSupport (裝置支援檔 / iOS device support)"},
-	{Path: "$HOME/Library/Developer/Xcode/UserData", Description: "Xcode UserData (使用者自訂設定與範本 / Xcode user data)"},
-	{Path: "$HOME/Library/Application Support/Antigravity IDE/logs", Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)"},
-}
-
-// ExpandPath replaces $HOME or ~ with the user's home directory.
-func ExpandPath(p string) string {
-	if strings.HasPrefix(p, "$HOME") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, strings.TrimPrefix(p, "$HOME"))
-		}
-	} else if strings.HasPrefix(p, "~/") || p == "~" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, strings.TrimPrefix(p, "~"))
-		}
-	}
-	return p
+	{Path: "~/Library/Developer/Xcode/DerivedData", Description: "Xcode DerivedData (建置快取 / Build cache)"},
+	{Path: "~/Library/Developer/Xcode/DeviceLogs", Description: "Xcode DeviceLogs (裝置日誌 / Device logs)"},
+	{Path: "~/Library/Developer/Xcode/iOS DeviceSupport", Description: "Xcode iOS DeviceSupport (裝置支援檔 / iOS device support)"},
+	{Path: "~/Library/Developer/Xcode/UserData", Description: "Xcode UserData (使用者自訂設定與範本 / Xcode user data)"},
+	{Path: "~/Library/Application Support/Antigravity IDE/logs", Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)"},
 }
 
 // FormatFullCmd returns the complete rm command line string.
@@ -130,7 +114,10 @@ func ExecuteDelete(ctx context.Context, in io.Reader, out io.Writer, targets []T
 		default:
 		}
 
-		resolved := ExpandPath(item.Path)
+		resolved, expandErr := homedir.Expand(os.ExpandEnv(item.Path))
+		if expandErr != nil {
+			resolved = item.Path
+		}
 		info, err := os.Lstat(resolved)
 		exists := (err == nil)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/bizshuk/dux/du"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -57,7 +58,10 @@ func NewModel(targets []TargetItem) Model {
 	items := make([]ItemState, len(targets))
 	ctx := context.Background()
 	for i, t := range targets {
-		resolved := ExpandPath(t.Path)
+		resolved, expandErr := homedir.Expand(os.ExpandEnv(t.Path))
+		if expandErr != nil {
+			resolved = t.Path
+		}
 		cmdStr := FormatFullCmd(resolved)
 		info, err := os.Lstat(resolved)
 		exists := (err == nil)

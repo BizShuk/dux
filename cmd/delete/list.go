@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/bizshuk/dux/du"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -53,7 +54,10 @@ func ExecuteList(ctx context.Context, out io.Writer, targets []TargetItem) error
 		default:
 		}
 
-		resolved := ExpandPath(item.Path)
+		resolved, expandErr := homedir.Expand(os.ExpandEnv(item.Path))
+		if expandErr != nil {
+			resolved = item.Path
+		}
 		fullCmd := FormatFullCmd(resolved)
 		info, err := os.Lstat(resolved)
 		if err != nil {

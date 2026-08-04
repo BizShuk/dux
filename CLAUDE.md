@@ -85,7 +85,7 @@ go build -o bin/dux .            # 編譯到 ./bin/
 go test ./...                              # 跑單元測試
 go test -race ./...                        # 含 race detector
 go build -o ~/.local/bin/dux .   # 安裝到 PATH（需 ~/.local/bin 在 $PATH）
-./run.sh                                   # symlink ~/.config/dux ./tmp/
+./scripts/run.sh                           # symlink ~/.config/dux ./tmp/（npm run run:setup）
 ```
 
 > 專案**不**提供 Makefile；2026-07-12 由排程驗證時補上的決定。

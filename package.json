@@ -1,0 +1,16 @@
+{
+  "name": "dux",
+  "version": "0.0.0",
+  "private": true,
+  "description": "高效能磁碟空間分析器 (single-shot disk usage analyzer)，每日由 pm2 排程產出 CSV 報表",
+  "scripts": {
+    "dev": "go run .",
+    "test": "go test ./...",
+    "build": "go build -o bin/dux .",
+    "deploy": "go install .",
+    "lint": "gofmt -l . && go vet ./...",
+    "clean": "rm -rf bin",
+    "destroy": "pm2 delete \"Disk Analysis Daily\"",
+    "run:setup": "./scripts/run.sh"
+  }
+}

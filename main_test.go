@@ -18,6 +18,6 @@ func TestRootCmdRegistersExpectedCommands(t *testing.T) {
 		"du",
 		"scan",
 		"show",
-		"tui",
+		"monitor",
 	}, commandNames)
 }

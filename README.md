@@ -12,7 +12,7 @@
 - 當前 v1 範圍：為相容既有 CSV consumer，合併結果仍使用單一 `breakdown-home` section；
   其他 section / 去重 / 冷資料 / TUI 互動瀏覽已不在主路徑
 
-> v1 簡化版後 `show` / `diff` / `tui` 暫時無新資料可讀（仍依賴 SQLite `entries` 表，
+> v1 簡化版後 `show` / `diff` / `monitor` 暫時無新資料可讀（仍依賴 SQLite `entries` 表，
 > 而 scan 已不再寫入）；見 `README.todo` 的追蹤項目。
 
 ## 與 file_watcher 的差異
@@ -119,7 +119,7 @@ CLI flag 列表：`scan --help` 即可（`--date` / `--min-size` / `--top` 保�
 | `~/.config/dux/settings.json`       | 使用者設定（首跑自動建立）                                    |
 | `~/.config/dux/settings.local.json` | `dux config` 預設寫入的高優先序覆寫設定                       |
 | `~/.config/dux/data/YYYY-MM-DD.csv` | 當日 CSV 報表（含 BOM + section 註解）                        |
-| `~/.config/dux/data/history.db`     | SQLite — 殘留供 `show` / `diff` / `tui` 讀，**scan 不再寫入** |
+| `~/.config/dux/data/history.db`     | SQLite — 殘留供 `show` / `diff` / `monitor` 讀，**scan 不再寫入** |
 | `~/.config/dux/logs/`               | pm2 stdout/stderr（`dux.{out,err}.log`）                      |
 
 ## 觀測整合

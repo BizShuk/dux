@@ -86,7 +86,7 @@ the v2 schema:
   path,is_dir,depth,size,change_size,is_duplicate,last_accessed,category
 
 so it can be ingested by spreadsheets, scripts, or the dux
-` + "`show`" + `, ` + "`diff`" + `, and ` + "`tui`" + ` sub-commands.`,
+` + "`show`" + `, ` + "`diff`" + `, and ` + "`monitor`" + ` sub-commands.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		sig := make(chan os.Signal, 1)

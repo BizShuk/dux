@@ -15,43 +15,44 @@ import (
 )
 
 var (
-	tuiDate      string
-	tuiAllowMark bool
+	monitorDate      string
+	monitorAllowMark bool
 )
 
-var TuiCmd = &cobra.Command{
-	Use:   "tui",
-	Short: "Launch the interactive tree browser (loads latest scan CSV)",
+var MonitorCmd = &cobra.Command{
+	Use:     "monitor",
+	Aliases: []string{"m"},
+	Short:   "Launch the interactive tree browser (loads latest scan CSV)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := handler.Wire()
 		if err != nil {
-			return fmt.Errorf("tui: wire: %w", err)
+			return fmt.Errorf("monitor: wire: %w", err)
 		}
 
-		date := tuiDate
+		date := monitorDate
 		if date == "" {
 			var lerr error
 			date, lerr = r.LatestDate()
 			if lerr != nil {
 				if errors.Is(lerr, svc.ErrNoScans) {
-					return errors.New("tui: no scan CSV yet — run 'scan' first")
+					return errors.New("monitor: no scan CSV yet — run 'scan' first")
 				}
-				return fmt.Errorf("tui: pick date: %w", lerr)
+				return fmt.Errorf("monitor: pick date: %w", lerr)
 			}
 		}
 		if date == "" {
-			return errors.New("tui: no scans yet — run 'scan' first")
+			return errors.New("monitor: no scans yet — run 'scan' first")
 		}
 		rows, err := r.ReadDate(date)
 		if err != nil {
-			return fmt.Errorf("tui: read date: %w", err)
+			return fmt.Errorf("monitor: read date: %w", err)
 		}
 		if len(rows) == 0 {
-			return errors.New("tui: no entries for that date — try another or run 'scan'")
+			return errors.New("monitor: no entries for that date — try another or run 'scan'")
 		}
 		cfg := config.GlobalSettings
 		if cfg == nil {
-			return errors.New("tui: config not initialized")
+			return errors.New("monitor: config not initialized")
 		}
 
 		// Build yesterday's path → size snapshot for the diff column.
@@ -67,18 +68,18 @@ var TuiCmd = &cobra.Command{
 			}
 		}
 
-		m := tui.NewModel(rows, prevSizes, tuiAllowMark, cfg.PrivacyRedactPaths)
+		m := tui.NewModel(rows, prevSizes, monitorAllowMark, cfg.PrivacyRedactPaths)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
-			return fmt.Errorf("tui: program: %w", err)
+			return fmt.Errorf("monitor: program: %w", err)
 		}
 		return nil
 	},
 }
 
 func init() {
-	TuiCmd.Flags().StringVar(&tuiDate, "date", "",
+	MonitorCmd.Flags().StringVar(&monitorDate, "date", "",
 		"scan date to load (default: latest scan CSV)")
-	TuiCmd.Flags().BoolVar(&tuiAllowMark, "allow-mark", false,
+	MonitorCmd.Flags().BoolVar(&monitorAllowMark, "allow-mark", false,
 		"enable mark/unmark keys")
 }

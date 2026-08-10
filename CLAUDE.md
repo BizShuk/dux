@@ -8,19 +8,19 @@
 dux/
 ├── main.go                  # composition root (config.Default + RootCmd + gosdk config cmd)
 ├── config/                  # gosdk config 整合 + Settings struct
-├── cmd/                     # exported cobra commands（du / scan / show / diff / tui / version）
+├── cmd/                     # exported cobra commands（du / scan / show / diff / monitor / version）
 ├── du/                      # 單 root depth-first walk（核心 scan engine）
 │   ├── du.go                # public API: Usage() + Options
 │   ├── walk.go              # filepath.WalkDir 變體 + shouldEmit
 │   ├── exclude.go           # glob exclude (bmatcuk/doublestar；支援 ** / * / basename)
 │   └── stat_unix.go         # Lstat / capacity 計算
-├── handler/                 # Runner DI container + show/diff/tui methods
+├── handler/                 # Runner DI container + show/diff/monitor methods
 ├── svc/                     # domain 邏輯 — 寫 CSV / 報表 / render
 │   ├── entry.go             # 資料型別 (EntryRow / ReportEntry)
 │   ├── csv_writer.go        # BOM + UTF-8 sanitize
 │   ├── report.go            # section builders + categorize
 │   ├── render.go            # 終端表格
-│   └── db.go                # SQLite（show/diff/tui 仍依賴；scan 不再寫入）
+│   └── db.go                # SQLite（show/diff/monitor 仍依賴；scan 不再寫入）
 ├── tui/                     # bubbletea 互動介面（待重接 CSV）
 └── docs/                    # spec + daemon + privacy
 ```
@@ -35,7 +35,7 @@ dux/
    `history.db` 殘留供舊版資料查詢，**新 scan 不再寫 DB**
 3. **CSV schema 穩定**：`path, size, change_size, is_duplicate, last_accessed, category`
     - section comment `# <name>`，Excel 友善（BOM）
-4. **隱私預設開啟**：`privacy_redact_paths` 黑名單；`tui` 顯示為 `<redacted>`
+4. **隱私預設開啟**：`privacy_redact_paths` 黑名單；`monitor` 顯示為 `<redacted>`
 5. **不做 hard delete**：TUI 只能 mark
 6. **Symbol MixedCaps**；const SCREAMING_SNAKE_CASE（gosdk 慣例）
 7. **多 root 並行**：`scan` 固定掃描 `$HOME`、`/tmp`、`/var`、`/Applications`、`/usr`；

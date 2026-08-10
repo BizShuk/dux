@@ -19,7 +19,7 @@ var RootCmd = &cobra.Command{
 	Long: `dux — single-shot disk analysis with concurrent scanning and CSV export.
 
 Use 'scan' for a full scan, 'show' to view a past scan, 'diff' to compare
-two dates, 'tui' to launch the interactive tree browser, and 'config' to
+two dates, 'monitor' (alias 'm') to launch the interactive tree browser, and 'config' to
 inspect or update application configuration.`,
 }
 
@@ -30,7 +30,7 @@ func init() {
 		appcmd.DuCmd,
 		appcmd.ScanCmd,
 		appcmd.ShowCmd,
-		appcmd.TuiCmd,
+		appcmd.MonitorCmd,
 	)
 }
 

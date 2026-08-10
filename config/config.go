@@ -2,11 +2,11 @@
 // and exposes the few fields the remaining sub-commands actually need.
 //
 // After the SQLite removal (2026-07-12), the surviving sub-commands
-// (`scan`, `show`, `diff`, `tui`) only require:
+// (`scan`, `show`, `diff`, `monitor`) only require:
 //
 //   - TopN — for `show` / `diff` top-N truncation
 //   - OverviewRootDepth — for `show` root overview depth
-//   - PrivacyRedactPaths — for `tui` path redaction patterns
+//   - PrivacyRedactPaths — for `monitor` path redaction patterns
 //   - Excludes / ExcludeFrom — passed to du.Usage by `scan`
 //   - DataDir / CSVDir / LogDir — derived from gosdk config paths
 //

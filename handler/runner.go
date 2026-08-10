@@ -1,5 +1,5 @@
 // Package handler is the façade for dux sub-commands that need
-// cross-cutting settings (show / diff / tui). After the SQLite removal,
+// cross-cutting settings (show / diff / monitor). After the SQLite removal,
 // Runner no longer holds long-lived state — every method either reads a
 // CSV file or transforms an in-memory slice.
 //
@@ -20,7 +20,7 @@ import (
 	"github.com/bizshuk/dux/svc"
 )
 
-// Runner is the façade for show / diff / tui. One Runner per command
+// Runner is the façade for show / diff / monitor. One Runner per command
 // invocation; no resources to close (CSV reads are local and short-lived).
 type Runner struct {
 	cfg *config.Settings

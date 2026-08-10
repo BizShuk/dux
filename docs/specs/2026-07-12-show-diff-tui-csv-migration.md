@@ -89,7 +89,7 @@
 ### 7. 文檔 / 規格
 
 - `svc/csv_writer.go` docstring：修掉 outdated `# <name>` 範例；列出實際 8 欄 schema；註明 reader 對 6-欄舊檔的容錯行為。
-- `docs/spec/2026-07-11-disk-analyzer-design.md` 補一段 "Schema v2 (post DB-removal)"。
+- `docs/specs/2026-07-11-disk-analyzer-design.md` 補一段 "Schema v2 (post DB-removal)"。
 - `README.todo` 第 4 行改為 `[x]`，加上 `@Completed` 時間戳。
 
 ## 驗證

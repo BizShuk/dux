@@ -92,7 +92,7 @@ go build -o ~/.local/bin/dux .   # 安裝到 PATH（需 ~/.local/bin 在 $PATH�
 
 ## 規格與計畫
 
-- 設計規格：`docs/spec/2026-07-11-dux-design.md`（部分章節已被實際實作超越；見檔首「Superseded」標註）
+- 設計規格：`docs/specs/2026-07-11-disk-analyzer-design.md`（部分章節已被實際實作超越；見檔首「Superseded」標註）
 - 部署範本：`docs/daemon.md`（pm2 + launchd + systemd）
 - 隱私策略：`docs/privacy.md`
 

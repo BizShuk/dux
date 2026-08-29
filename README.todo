@@ -1,11 +1,5 @@
 # TODO
 
-
-## 觀測整合
-
-
-## Infra
-
 ## Archive
 
 - [x] show / diff / tui 改讀 CSV；svc/db.go、svc/db_test.go、config.Settings.SQLitePath、gosdk/db 依賴一併移除；CSV schema 擴充為 v2（path, is_dir, depth, size, change_size, is_duplicate, last_accessed, category）；reader 向後相容 v1。@2026-07-12_01:15:00 @Completed

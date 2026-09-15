@@ -28,6 +28,7 @@ var (
 	scanProgress    bool
 	scanExcludes    []string
 	scanExcludeFrom string
+	scanRoots       []string
 )
 
 type scanUsageFunc func(context.Context, du.Options) (*du.Result, error)
@@ -38,8 +39,14 @@ type rootScanResult struct {
 	err    error
 }
 
+// defaultScanRoots is what `scan` walks when --roots is not given.
+//
+// /Applications is deliberately absent: it is large, almost entirely
+// non-deletable (apps are removed through their uninstaller, not rm -rf), and
+// walking it doubles the scan for entries nobody acts on. Pass
+// `--roots /Applications` to include it explicitly.
 func defaultScanRoots(home string) []string {
-	return []string{home, "/tmp", "/var", "/Applications", "/usr"}
+	return []string{home, "/tmp", "/var", "/usr"}
 }
 
 func scanAllRoots(
@@ -78,8 +85,8 @@ func scanAllRoots(
 var ScanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Walk default filesystem roots and write entries ≥ threshold to CSV",
-	Long: `Run concurrent disk-usage scans rooted at $HOME, /tmp, /var,
-/Applications, and /usr, then persist entries that meet the size threshold
+	Long: `Run concurrent disk-usage scans rooted at $HOME, /tmp, /var, and /usr
+(override with --roots), then persist entries that meet the size threshold
 (default 200MB) to a CSV file under the configured CSV directory. The CSV uses
 the v2 schema:
 
@@ -109,7 +116,10 @@ so it can be ingested by spreadsheets, scripts, or the dux
 		if err != nil {
 			return fmt.Errorf("scan: home dir: %w", err)
 		}
-		roots := defaultScanRoots(home)
+		roots := scanRoots
+		if len(roots) == 0 {
+			roots = defaultScanRoots(home)
+		}
 
 		date := scanDate
 		if date == "" {
@@ -209,6 +219,9 @@ so it can be ingested by spreadsheets, scripts, or the dux
 }
 
 func init() {
+	ScanCmd.Flags().StringSliceVar(&scanRoots, "roots", nil,
+		"filesystem roots to walk (default: $HOME, /tmp, /var, /usr; "+
+			"/Applications is excluded unless named here)")
 	ScanCmd.Flags().StringVar(&scanDate, "date", "", "scan date (YYYY-MM-DD, default: today)")
 	ScanCmd.Flags().StringVar(&scanMinSize, "min-size", "200MB",
 		"minimum size for inclusion in the CSV (e.g. 200MB, 1GB)")

@@ -8,7 +8,7 @@
 dux/
 ├── main.go                  # composition root (config.Default + RootCmd + gosdk config cmd)
 ├── config/                  # gosdk config 整合 + Settings struct
-├── cmd/                     # exported cobra commands（du / scan / show / diff / monitor / version）
+├── cmd/                     # exported cobra commands（du / scan / analyze / show / diff / monitor）
 ├── du/                      # 單 root depth-first walk（核心 scan engine）
 │   ├── du.go                # public API: Usage() + Options
 │   ├── walk.go              # filepath.WalkDir 變體 + shouldEmit
@@ -20,8 +20,13 @@ dux/
 │   ├── csv_writer.go        # BOM + UTF-8 sanitize
 │   ├── report.go            # section builders + categorize
 │   ├── render.go            # 終端表格
+│   ├── rollup.go            # 可刪性判定 + 不重複計算的 rollup（analyze 核心）
+│   ├── rollup_render.go     # analyze 報表輸出
+│   ├── rules.json           # 可刪性規則表（go:embed 內嵌，doublestar glob）
 │   └── db.go                # SQLite（show/diff/monitor 仍依賴；scan 不再寫入）
 ├── tui/                     # bubbletea 互動介面（待重接 CSV）
+├── skills/disk-analyze/     # Claude skill：CSV → 不重複計算的刪除候選清單
+├── .claude-plugin/          # plugin.json（由 tools marketplace 以 github source 載入）
 └── docs/                    # spec + daemon + privacy
 ```
 
@@ -38,8 +43,11 @@ dux/
 4. **隱私預設開啟**：`privacy_redact_paths` 黑名單；`monitor` 顯示為 `<redacted>`
 5. **不做 hard delete**：TUI 只能 mark
 6. **Symbol MixedCaps**；const SCREAMING_SNAKE_CASE（gosdk 慣例）
-7. **多 root 並行**：`scan` 固定掃描 `$HOME`、`/tmp`、`/var`、`/Applications`、`/usr`；
-   每個 root 一個 goroutine，單一 root 失敗不阻斷其他成功結果
+7. **多 root 並行**：`scan` 預設掃描 `$HOME`、`/tmp`、`/var`、`/usr`（`--roots` 可覆寫）；
+   每個 root 一個 goroutine，單一 root 失敗不阻斷其他成功結果。
+   `/Applications` **刻意不在預設清單**：幾乎全是不可刪內容，掃它只讓時間加倍
+8. **rollup 不重複計算**：`analyze` 只把「整個可刪」的節點列為候選並壓掉其子項目；
+   不能整個刪的節點永不列為候選，改成往下鑽找可刪子項目，因此總計可直接相信
 
 ## 關鍵決策
 
@@ -84,9 +92,12 @@ max_retries: 0,
 go build -o bin/dux .            # 編譯到 ./bin/
 go test ./...                              # 跑單元測試
 go test -race ./...                        # 含 race detector
-go build -o ~/.local/bin/dux .   # 安裝到 PATH（需 ~/.local/bin 在 $PATH）
+go build -o ~/.local/go/bin/dux .          # 安裝到 PATH
 ./scripts/run.sh                           # symlink ~/.config/dux ./tmp/（npm run run:setup）
 ```
+
+> 這台機器 `$PATH` 上有**兩個** `dux`：`~/.local/go/bin/dux`（優先）與 `~/.local/bin/dux`。
+> 裝到後者會被前者遮住，出現「改了程式卻沒生效」；先 `which -a dux` 確認再安裝。
 
 > 專案**不**提供 Makefile；2026-07-12 由排程驗證時補上的決定。
 

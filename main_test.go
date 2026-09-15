@@ -13,6 +13,7 @@ func TestRootCmdRegistersExpectedCommands(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, []string{
+		"analyze",
 		"delete",
 		"diff",
 		"du",

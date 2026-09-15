@@ -1,0 +1,16 @@
+{
+  "name": "dux",
+  "version": "1.0.0",
+  "description": "Disk usage analyzer plugin containing skills to scan disk, rank deletion candidates without double counting, and reclaim space.",
+  "author": {
+    "name": "Shuk Liu",
+    "email": "shuk.liu@gmail.com",
+    "url": "https://github.com/bizshuk"
+  },
+  "homepage": "https://github.com/bizshuk/dux",
+  "repository": "https://github.com/bizshuk/dux",
+  "license": "MIT",
+  "keywords": ["disk", "disk-usage", "cleanup", "storage", "du", "reclaim-space"],
+  "agents": [],
+  "skills": []
+}

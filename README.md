@@ -7,7 +7,7 @@
 `dux` 是給 macOS/Linux 桌面使用者用的單次深度磁碟分析工具，每日 06:00 由 pm2 排程觸發。產出：
 
 - **CSV 報表**：每個掃描日寫入 `~/.config/dux/data/YYYY-MM-DD.csv`，
-  列出 `$HOME`、`/tmp`、`/var`、`/Applications`、`/usr` 下 ≥ 200MB 的檔案與資料夾
+  列出 `$HOME`、`/tmp`、`/var`、`/usr` 下 ≥ 200MB 的檔案與資料夾
   （依 size desc 排序）
 - 當前 v1 範圍：為相容既有 CSV consumer，合併結果仍使用單一 `breakdown-home` section；
   其他 section / 去重 / 冷資料 / TUI 互動瀏覽已不在主路徑
@@ -20,7 +20,7 @@
 | 工具           | 模式                                       | 用途                                            |
 | -------------- | ------------------------------------------ | ----------------------------------------------- |
 | `file_watcher` | 長期 daemon（排程監控 + 定期 flush stats） | 追蹤 watch_list 下的檔案數量/大小**增長趨勢**   |
-| `dux`          | 單次觸發（每日 06:00 pm2 cron）            | 給出**當前**五個預設 roots 的磁碟使用全貌（CSV 給人看） |
+| `dux`          | 單次觸發（每日 06:00 pm2 cron）            | 給出**當前**四個預設 roots 的磁碟使用全貌，並排出可刪清單 |
 
 兩個工具職責互補：file_watcher 回答「過去 N 天哪些路徑在長大」，
 dux 回答「現在哪些東西可以清掉」。
@@ -33,12 +33,11 @@ pm2 cron (每日 06:00)
         ▼
    dux scan
         │
-        ├─► 5 goroutines × du.Usage
+        ├─► 4 goroutines × du.Usage
         │      ├─ $HOME
         │      ├─ /tmp
         │      ├─ /var
-        │      ├─ /Applications
-        │      └─ /usr
+        │      └─ /usr        （/Applications 預設不掃，需 --roots 明確指定）
         │         ├─ 每個 root 內以 depth-first walk 掃描
         │         ├─ shouldEmit 過濾 depth=0 + threshold (default 200MB)
         │         ├─ exclude.go 套用 glob excludes
@@ -60,11 +59,16 @@ pm2 cron (每日 06:00)
 go build -o bin/dux .
 
 # 2. 跑一次掃描（會覆寫當日 CSV）
-./bin/dux scan                       # 五個預設 roots 並行掃描，預設 ≥ 200MB
+./bin/dux scan                       # 四個預設 roots 並行掃描，預設 ≥ 200MB
 ./bin/dux scan --min-size 500MB      # 自訂門檻
 ./bin/dux scan --date 2026-07-11     # 指定日期檔名
+./bin/dux scan --roots $HOME,/Applications   # 自訂 roots
 
-# 3. 檢視或修改設定
+# 3. 排出可刪清單（每個 byte 只算一次）
+./bin/dux analyze                    # 最新 CSV 的 top 20 候選 + 人工判斷清單
+./bin/dux analyze --show-rules       # 檢視可刪性判定表
+
+# 4. 檢視或修改設定
 ./bin/dux config
 ./bin/dux config --source
 ./bin/dux config --update top_n=20

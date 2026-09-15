@@ -18,13 +18,15 @@ var RootCmd = &cobra.Command{
 	Short: "High-performance disk usage analyzer with TUI + observability",
 	Long: `dux — single-shot disk analysis with concurrent scanning and CSV export.
 
-Use 'scan' for a full scan, 'show' to view a past scan, 'diff' to compare
+Use 'scan' for a full scan, 'analyze' to rank what can be deleted,
+'show' to view a past scan, 'diff' to compare
 two dates, 'monitor' (alias 'm') to launch the interactive tree browser, and 'config' to
 inspect or update application configuration.`,
 }
 
 func init() {
 	RootCmd.AddCommand(
+		appcmd.AnalyzeCmd,
 		cmddelete.Cmd,
 		appcmd.DiffCmd,
 		appcmd.DuCmd,

@@ -12,7 +12,7 @@ import (
 )
 
 func TestDefaultScanRoots(t *testing.T) {
-	assert.Equal(t, []string{"/home/test", "/tmp", "/var", "/Applications", "/usr"},
+	assert.Equal(t, []string{"/home/test", "/tmp", "/var", "/usr"},
 		defaultScanRoots("/home/test"))
 }
 

@@ -164,3 +164,45 @@ func reportsToEntries(rows []svc.ReportEntry) []svc.Entry {
 	}
 	return out
 }
+
+// AnalyzeOptions carries what RunAnalyze needs beyond the scan date.
+type AnalyzeOptions struct {
+	Rollup      svc.RollupOptions
+	RulesPath   string // empty → embedded default rule table
+	ShowMembers bool   // list the paths behind a collapsed row
+}
+
+// RunAnalyze reads a scan CSV and prints the non-overlapping deletion plan.
+// Empty date → latest CSV by stem (filename date, ISO-8601).
+func (r *Runner) RunAnalyze(ctx context.Context, date string, opts AnalyzeOptions) error {
+	_ = ctx
+	if date == "" {
+		latest, err := svc.LatestDate(r.cfg.CSVDir)
+		if err != nil {
+			if errors.Is(err, svc.ErrNoScans) {
+				return errors.New("analyze: no scan CSV yet — run 'scan' first")
+			}
+			return fmt.Errorf("analyze: latest date: %w", err)
+		}
+		date = latest
+	}
+	csvPath := filepath.Join(r.cfg.CSVDir, date+".csv")
+	rows, err := svc.ReadCSV(csvPath)
+	if err != nil {
+		return fmt.Errorf("analyze: read csv: %w", err)
+	}
+
+	rules, err := svc.DefaultRules()
+	if opts.RulesPath != "" {
+		rules, err = svc.LoadRules(opts.RulesPath)
+	}
+	if err != nil {
+		return fmt.Errorf("analyze: rules: %w", err)
+	}
+
+	res := svc.Rollup(rows, rules, opts.Rollup)
+	renderOpts := svc.DefaultRollupRenderOptions()
+	renderOpts.ShowMember = opts.ShowMembers
+	svc.PrintRollup(os.Stdout, csvPath, res, renderOpts)
+	return nil
+}

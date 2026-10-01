@@ -132,6 +132,9 @@ func (m *Model) renderRow(idx int) string {
 	if name == "" {
 		name = n.path
 	}
+	if m.deletable[n.path] {
+		name = m.styles.Deletable.Render(name + " [del]")
+	}
 
 	// Size column: either the bare today value or the unified
 	// "<prev> → <today>" form when yesterday's snapshot was loaded.

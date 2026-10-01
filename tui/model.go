@@ -71,8 +71,9 @@ type Model struct {
 	allowMark        bool
 	privacyRedactSet map[string]bool // lowercase substrings from cfg.privacy_redact_paths; delete refuses any match
 	prevSizes        map[string]int64
-	statusMessage    string // transient message shown in the status bar after a destructive op
-	pendingDelete    *treeNode // non-nil when waiting for `y` to confirm trash
+	deletable        map[string]bool // analyze delete-candidate paths; rendered highlighted
+	statusMessage    string          // transient message shown in the status bar after a destructive op
+	pendingDelete    *treeNode       // non-nil when waiting for `y` to confirm trash
 }
 
 // NewModel constructs a Model from a full set of DB rows for one scan date.
@@ -89,7 +90,10 @@ type Model struct {
 // the diff column; when non-nil the view appends "<prev> →" to each row so
 // growth is visible at a glance. Paths missing from the snapshot render as
 // "0 →" (i.e. they were not present yesterday).
-func NewModel(rows []svc.EntryRow, prevSizes map[string]int64, allowMark bool, privacyRedactPaths []string) *Model {
+//
+// deletable is the analyze delete-candidate path set; matching rows render
+// in the Deletable style. Pass nil to disable highlighting.
+func NewModel(rows []svc.EntryRow, prevSizes map[string]int64, deletable map[string]bool, allowMark bool, privacyRedactPaths []string) *Model {
 	roots := buildTree(rows)
 	expanded := make(map[string]bool, len(roots))
 	for _, r := range roots {
@@ -114,6 +118,7 @@ func NewModel(rows []svc.EntryRow, prevSizes map[string]int64, allowMark bool, p
 		allowMark:        allowMark,
 		privacyRedactSet: redactSet,
 		prevSizes:        prevSizes,
+		deletable:        deletable,
 	}
 	m.rebuildFlat()
 	return m

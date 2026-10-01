@@ -149,6 +149,26 @@ func (r *Runner) ReadDate(date string) ([]svc.EntryRow, error) {
 	return out, nil
 }
 
+// DeleteCandidates returns every path the analyze rollup would propose for
+// deletion on that date (embedded rules, uncollapsed, no top-N cut), so the
+// monitor tree can highlight the same list analyze prints.
+func (r *Runner) DeleteCandidates(date string) (map[string]bool, error) {
+	rows, err := svc.ReadCSV(filepath.Join(r.cfg.CSVDir, date+".csv"))
+	if err != nil {
+		return nil, err
+	}
+	rules, err := svc.DefaultRules()
+	if err != nil {
+		return nil, err
+	}
+	res := svc.Rollup(rows, rules, svc.RollupOptions{NoCollapse: true})
+	out := make(map[string]bool, len(res.Candidates))
+	for _, c := range res.Candidates {
+		out[c.Path] = true
+	}
+	return out, nil
+}
+
 // reportsToEntries converts ReportEntry rows (the CSV shape) into the
 // narrower Entry shape consumed by svc.DiffEntries.
 func reportsToEntries(rows []svc.ReportEntry) []svc.Entry {

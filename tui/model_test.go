@@ -138,7 +138,7 @@ func TestRebuildFlat_RespectsExpansion(t *testing.T) {
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 		mkRow("/Users/shuk/Downloads", true, 3000, 1),
 	}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 
 	// Default: root expanded, everything else collapsed.
 	// Visible = root + its direct children = 3 rows.
@@ -177,7 +177,7 @@ func TestHandleExpand_MovesToFirstChild(t *testing.T) {
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 		mkRow("/Users/shuk/Downloads", true, 3000, 1),
 	}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	m.cursor = 0 // on root, which is expanded by default
 	m.handleExpand()
 	if m.cursor != 1 {
@@ -193,7 +193,7 @@ func TestHandleCollapse_MovesToParent(t *testing.T) {
 		mkRow("/Users/shuk/Documents", true, 2000, 1),
 		mkRow("/Users/shuk/Documents/a.pdf", false, 100, 2),
 	}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	// Expand Documents so a.pdf is visible.
 	m.expanded["/Users/shuk/Documents"] = true
 	m.rebuildFlat()
@@ -220,7 +220,7 @@ func TestDelete_RefusesPrivacyPath(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(sensitive, false, 6, 2)}
-	m := NewModel(rows, nil, false, []string{".ssh"})
+	m := NewModel(rows, nil, nil, false, []string{".ssh"})
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 
@@ -240,7 +240,7 @@ func TestDelete_RefusesPrivacyPath(t *testing.T) {
 // to a real filesystem path).
 func TestDelete_RefusesRedactedPlaceholder(t *testing.T) {
 	rows := []svc.EntryRow{mkRow("<redacted:contains-private>", false, 1, 1)}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if !strings.Contains(m.statusMessage, "redacted placeholder") {
@@ -268,7 +268,7 @@ func TestDelete_RequestSetsPendingDelete(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 
@@ -304,7 +304,7 @@ func TestDelete_NonYKeyCancels(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if m.pendingDelete == nil {
@@ -343,7 +343,7 @@ func TestDelete_MovesFileToTrash(t *testing.T) {
 	}
 
 	rows := []svc.EntryRow{mkRow(src, false, 9, 1)}
-	m := NewModel(rows, nil, false, nil)
+	m := NewModel(rows, nil, nil, false, nil)
 	m.cursor = 0
 	m.requestDeleteAtCursor()
 	if m.pendingDelete == nil {
@@ -373,7 +373,7 @@ func TestDelete_MovesFileToTrash(t *testing.T) {
 // entirely when the caller doesn't supply yesterday's snapshot — keeping
 // the default view clean for users who run tui on a fresh install.
 func TestPrevCol_NilMapReturnsEmpty(t *testing.T) {
-	m := NewModel(nil, nil, false, nil)
+	m := NewModel(nil, nil, nil, false, nil)
 	if got := m.prevCol(&treeNode{path: "/foo", size: 1024}); got != "" {
 		t.Errorf("prevCol with nil map should return empty, got %q", got)
 	}
@@ -384,7 +384,7 @@ func TestPrevCol_NilMapReturnsEmpty(t *testing.T) {
 // from yesterday's snapshot renders as "0 → <today>".
 func TestPrevCol_NewFileShowsZeroArrow(t *testing.T) {
 	prev := map[string]int64{"/Users/shuk/Documents": 2048}
-	m := NewModel(nil, prev, false, nil)
+	m := NewModel(nil, prev, nil, false, nil)
 	got := m.prevCol(&treeNode{path: "/Users/shuk/Downloads/new.zip", size: 4096})
 	want := "0 → 4.0KB"
 	if got != want {
@@ -397,7 +397,7 @@ func TestPrevCol_NewFileShowsZeroArrow(t *testing.T) {
 // sides formatted via svc.FormatBytes (1024-base).
 func TestPrevCol_ExistingFileShowsPrevArrow(t *testing.T) {
 	prev := map[string]int64{"/Users/shuk/Documents/report.pdf": 5 * 1024 * 1024}
-	m := NewModel(nil, prev, false, nil)
+	m := NewModel(nil, prev, nil, false, nil)
 	got := m.prevCol(&treeNode{path: "/Users/shuk/Documents/report.pdf", size: 8 * 1024 * 1024})
 	want := "5.0MB → 8.0MB"
 	if got != want {
@@ -412,7 +412,7 @@ func TestRenderRow_DeletedFileDisappears(t *testing.T) {
 	// Today has only one path; yesterday had a different one.
 	today := []svc.EntryRow{mkRow("/Users/shuk/Documents", true, 1000, 0)}
 	yesterday := map[string]int64{"/Users/shuk/OldStuff/deleted.zip": 9999}
-	m := NewModel(today, yesterday, false, nil)
+	m := NewModel(today, yesterday, nil, false, nil)
 
 	var saw strings.Builder
 	for i := range m.flat {
@@ -433,7 +433,7 @@ func TestRenderRow_DeletedFileDisappears(t *testing.T) {
 func TestRenderRow_IncludesDiffColumn(t *testing.T) {
 	today := []svc.EntryRow{mkRow("/Users/shuk/Downloads/file.bin", false, 4096, 1)}
 	yesterday := map[string]int64{"/Users/shuk/Downloads/file.bin": 1024}
-	m := NewModel(today, yesterday, false, nil)
+	m := NewModel(today, yesterday, nil, false, nil)
 
 	out := m.renderRow(0)
 	if !strings.Contains(out, "1.0KB → 4.0KB") {
@@ -451,10 +451,30 @@ func TestRenderRow_IncludesDiffColumn(t *testing.T) {
 // (no trailing arrow column).
 func TestRenderRow_OmitsDiffColumnWhenNoPrev(t *testing.T) {
 	today := []svc.EntryRow{mkRow("/Users/shuk/Downloads/file.bin", false, 4096, 1)}
-	m := NewModel(today, nil, false, nil)
+	m := NewModel(today, nil, nil, false, nil)
 
 	out := m.renderRow(0)
 	if strings.Contains(out, "→") {
 		t.Errorf("no-prev row must not contain arrow, got %q", out)
+	}
+}
+
+func TestRenderRowHighlightsDeletable(t *testing.T) {
+	rows := []svc.EntryRow{
+		{Path: "/r", IsDir: true, SizeBytes: 20, Depth: 0},
+		{Path: "/r/cache", IsDir: true, SizeBytes: 10, Depth: 1},
+		{Path: "/r/docs", IsDir: true, SizeBytes: 10, Depth: 1},
+	}
+	m := NewModel(rows, nil, map[string]bool{"/r/cache": true}, false, nil)
+	var got []string
+	for i := range m.flat {
+		got = append(got, m.renderRow(i))
+	}
+	all := strings.Join(got, "\n")
+	if !strings.Contains(all, "cache [del]") {
+		t.Fatalf("deletable row not tagged:\n%s", all)
+	}
+	if strings.Contains(all, "docs [del]") {
+		t.Fatalf("non-candidate row tagged:\n%s", all)
 	}
 }

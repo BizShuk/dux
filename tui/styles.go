@@ -18,6 +18,7 @@ type Styles struct {
 	StatusBar   lipgloss.Style
 	Border      lipgloss.Style
 	IndicatorOK lipgloss.Style
+	Deletable   lipgloss.Style
 }
 
 // DefaultStyles returns the default style set.
@@ -57,5 +58,8 @@ func DefaultStyles() Styles {
 			Border(lipgloss.NormalBorder()),
 		IndicatorOK: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("10")),
+		Deletable: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("9")).
+			Bold(true),
 	}
 }

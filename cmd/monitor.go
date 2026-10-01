@@ -68,7 +68,12 @@ var MonitorCmd = &cobra.Command{
 			}
 		}
 
-		m := tui.NewModel(rows, prevSizes, monitorAllowMark, cfg.PrivacyRedactPaths)
+		deletable, err := r.DeleteCandidates(date)
+		if err != nil {
+			return fmt.Errorf("monitor: delete candidates: %w", err)
+		}
+
+		m := tui.NewModel(rows, prevSizes, deletable, monitorAllowMark, cfg.PrivacyRedactPaths)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("monitor: program: %w", err)

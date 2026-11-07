@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 技術脈絡 (technical context) for the dux Go CLI。
 

@@ -48,10 +48,12 @@
     { "glob": "**/Library/Application Support/*/Code Cache", "why": "Electron code cache" },
     { "glob": "**/Library/Application Support/*/GPUCache", "why": "Electron GPU cache" },
     { "glob": "**/Library/Application Support/*/logs", "why": "app log" },
-    { "glob": "**/Library/Application Support/CrashReporter", "why": "crash log" }
+    { "glob": "**/Library/Application Support/CrashReporter", "why": "crash log" },
+    { "glob": "/var/db/powerlog/Library/PerfPowerTelemetry/BackgroundProcessing", "why": "PowerLog 背景排程遙測 SQLite (正常 <300MB, 會膨脹到 GB 級), sudo rm 後重開機自動重建" }
   ],
   "review": [
     { "glob": "/Applications", "why": "逐個 app 判斷, 用解除安裝而非 rm" },
+    { "glob": "/var/db/diagnostics", "why": "Unified Logging (logd 自行輪替 1.5~3.5GB), 禁止 rm -rf 會毀 uuidtext 索引, 改用 sudo log erase --all" },
     { "glob": "**/Downloads", "why": "下載暫存, 多半可清但先看內容" },
     { "glob": "**/Library/Developer/Xcode/Archives", "why": "上架封存, 刪了無法重簽舊版" },
     { "glob": "**/Library/Developer/Xcode/UserData", "why": "Xcode 個人設定與 snippet, 刪掉會重置" },

@@ -1,6 +1,8 @@
 ---
 name: disk-analyze
 description: Use when disk space is running low or someone asks what is taking up space, what can be deleted, which folders are largest, or wants to reclaim space on a Mac or Linux box. Triggers on "磁碟快滿了", "空間不夠", "什麼可以刪", "清理磁碟", "disk full", "no space left on device", "largest folders", "top 20 biggest", "what is eating my disk".
+metadata:
+    source: https://github.com/BizShuk/dux
 ---
 
 # disk-analyze

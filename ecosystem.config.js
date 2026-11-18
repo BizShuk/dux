@@ -7,7 +7,7 @@ module.exports = {
     apps: [
         // Daily 06:00 disk usage scan.
         {
-            name: "Disk Analysis Daily",
+            name: "Disk Analysis - Daily",
             namespace: "Local",
             script: "dux",
             args: ["scan"],

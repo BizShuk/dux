@@ -1,4 +1,4 @@
-// Package config loads dux settings from gosdk + default_settings.json
+// Package config loads dux settings from gosdk + config/example/settings.example.json
 // and exposes the few fields the remaining sub-commands actually need.
 //
 // After the SQLite removal (2026-07-12), the surviving sub-commands
@@ -21,12 +21,18 @@ import (
 	"os"
 	"time"
 
+	gosdkcmdconfig "github.com/bizshuk/gosdk/cmd/config"
 	"github.com/bizshuk/gosdk/config"
 	"github.com/spf13/viper"
 )
 
-//go:embed default_settings.json
+//go:embed example/settings.example.json
 var defaultSettingsJSON string
+
+// init 登記內嵌範例, 供 `config default` 複製到設定目錄.
+func init() {
+	gosdkcmdconfig.MustRegisterDefault("settings.json", []byte(defaultSettingsJSON))
+}
 
 // Settings is the runtime configuration for dux.
 // Fields tagged with `json:"-"` are populated at validate() time from

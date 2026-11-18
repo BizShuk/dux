@@ -108,7 +108,7 @@ CLI flag 列表：`scan --help` 即可（`--date` / `--min-size` / `--top` 保�
 }
 ```
 
-完整預設值見 `config/default_settings.json`。
+完整預設值見 `config/example/settings.example.json`。
 `DataDir` / `LogDir` / `CSVDir` 由 `gosdk` 推導，不在 JSON 內。
 
 `dux config` 由 `gosdk/cmd.ConfigCmd` 提供：無 flags 時顯示 merge 後設定，

@@ -32,8 +32,21 @@ func TestDefaultTargetsIncludeAntigravityIDELogs(t *testing.T) {
 	})
 }
 
+func TestDefaultTargetsIncludeUnifiedLogging(t *testing.T) {
+	assert.Contains(t, DefaultTargets, TargetItem{
+		Path:        "/var/db/diagnostics",
+		Description: "macOS Unified Logging (系統日誌 / Unified Logging)",
+		Cmd:         []string{"sudo", "log", "erase", "--all"},
+	})
+}
+
 func TestFormatFullCmd(t *testing.T) {
 	assert.Equal(t, `rm -rf "/tmp/foo"`, FormatFullCmd("/tmp/foo"))
+	assert.Equal(t, `rm -rf "/tmp/foo"`, TargetItem{Path: "/tmp/foo"}.FullCmd("/tmp/foo"))
+	assert.Equal(t, "sudo log erase --all", TargetItem{
+		Path: "/var/db/diagnostics",
+		Cmd:  []string{"sudo", "log", "erase", "--all"},
+	}.FullCmd("/var/db/diagnostics"))
 }
 
 func TestHumanSize(t *testing.T) {
@@ -171,4 +184,41 @@ func TestTUI_ModelNavigationAndSelection(t *testing.T) {
 	// File should be deleted from filesystem
 	_, statErr := os.Stat(testPath)
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestExecuteList_CustomCmd(t *testing.T) {
+	tmpDir := t.TempDir()
+	targets := []TargetItem{
+		{
+			Path:        tmpDir,
+			Description: "Custom Cmd Target",
+			Cmd:         []string{"sudo", "log", "erase", "--all"},
+		},
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, ExecuteList(context.Background(), &out, targets))
+	assert.Contains(t, out.String(), "sudo log erase --all")
+	assert.NotContains(t, out.String(), "rm -rf")
+}
+
+func TestExecuteDelete_CustomCmd(t *testing.T) {
+	tmpDir := t.TempDir()
+	targets := []TargetItem{
+		{
+			Path:        tmpDir,
+			Description: "Custom Cmd Target",
+			Cmd:         []string{"echo", "erased-ok"},
+		},
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, ExecuteDelete(context.Background(), strings.NewReader("y\n"), &out, targets, false))
+	output := out.String()
+	assert.Contains(t, output, "erased-ok")
+	assert.Contains(t, output, "已刪除 (Deleted)")
+
+	// Custom command should not os.RemoveAll the directory itself
+	_, statErr := os.Stat(tmpDir)
+	assert.NoError(t, statErr)
 }

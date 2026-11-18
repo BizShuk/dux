@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
-	"github.com/bizshuk/dux/du"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -58,32 +57,13 @@ func NewModel(targets []TargetItem) Model {
 	items := make([]ItemState, len(targets))
 	ctx := context.Background()
 	for i, t := range targets {
-		resolved, expandErr := homedir.Expand(os.ExpandEnv(t.Path))
-		if expandErr != nil {
-			resolved = t.Path
-		}
-		cmdStr := FormatFullCmd(resolved)
-		info, err := os.Lstat(resolved)
-		exists := (err == nil)
-		var size uint64
-		if exists {
-			res, uerr := du.Usage(ctx, du.Options{
-				Paths:        []string{resolved},
-				MaxDepth:     0,
-				ApparentSize: false,
-			})
-			if uerr == nil && res != nil {
-				size = res.GrandTotal.Size
-			} else if info != nil {
-				size = uint64(info.Size())
-			}
-		}
+		resolved, size, err := resolveTarget(ctx, t.Path)
 		items[i] = ItemState{
 			Target:   t,
 			Resolved: resolved,
-			Cmd:      cmdStr,
+			Cmd:      t.FullCmd(resolved),
 			Size:     size,
-			Exists:   exists,
+			Exists:   err == nil,
 			Selected: false,
 		}
 	}
@@ -93,12 +73,42 @@ func NewModel(targets []TargetItem) Model {
 	}
 }
 
+type execDoneMsg struct {
+	index int
+	err   error
+}
+
+func (m Model) nextCmdExec() tea.Cmd {
+	for i, it := range m.Items {
+		if it.Selected && it.Exists && !it.Deleted && len(it.Target.Cmd) > 0 {
+			idx := i
+			c := exec.Command(it.Target.Cmd[0], it.Target.Cmd[1:]...)
+			return tea.ExecProcess(c, func(err error) tea.Msg {
+				return execDoneMsg{index: idx, err: err}
+			})
+		}
+	}
+	return nil
+}
+
 func (m Model) Init() tea.Cmd {
 	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case execDoneMsg:
+		it := &m.Items[msg.index]
+		if msg.err != nil {
+			it.Err = msg.err
+			it.Selected = false
+			m.StatusMsg = fmt.Sprintf("執行失敗 (%s): %v", it.Cmd, msg.err)
+		} else {
+			it.Deleted = true
+			it.Selected = false
+			m.StatusMsg = fmt.Sprintf("已執行 %s，釋放 %s", it.Cmd, HumanSize(it.Size))
+		}
+		return m, m.nextCmdExec()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -134,7 +144,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				deletedCount := 0
 				var freed uint64
 				for i := range m.Items {
-					if m.Items[i].Selected && m.Items[i].Exists && !m.Items[i].Deleted {
+					if m.Items[i].Selected && m.Items[i].Exists && !m.Items[i].Deleted && len(m.Items[i].Target.Cmd) == 0 {
 						err := os.RemoveAll(m.Items[i].Resolved)
 						if err != nil {
 							m.Items[i].Err = err
@@ -147,6 +157,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.Confirming = false
+				if cmd := m.nextCmdExec(); cmd != nil {
+					if deletedCount > 0 {
+						m.StatusMsg = fmt.Sprintf("已成功刪除 %d 個項目，共釋放 %s", deletedCount, HumanSize(freed))
+					}
+					return m, cmd
+				}
 				m.StatusMsg = fmt.Sprintf("已成功刪除 %d 個項目，共釋放 %s", deletedCount, HumanSize(freed))
 			} else {
 				hasSelected := false

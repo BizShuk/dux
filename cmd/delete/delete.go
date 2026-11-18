@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -21,6 +22,7 @@ var forceYes bool
 type TargetItem struct {
 	Path        string
 	Description string
+	Cmd         []string // Optional custom command instead of os.RemoveAll
 }
 
 var DefaultTargets = []TargetItem{
@@ -29,11 +31,55 @@ var DefaultTargets = []TargetItem{
 	{Path: "~/Library/Developer/Xcode/iOS DeviceSupport", Description: "Xcode iOS DeviceSupport (裝置支援檔 / iOS device support)"},
 	{Path: "~/Library/Developer/Xcode/UserData", Description: "Xcode UserData (使用者自訂設定與範本 / Xcode user data)"},
 	{Path: "~/Library/Application Support/Antigravity IDE/logs", Description: "Antigravity IDE Logs (IDE 日誌 / IDE logs)"},
+	{
+		Path:        "/var/db/diagnostics",
+		Description: "macOS Unified Logging (系統日誌 / Unified Logging)",
+		Cmd:         []string{"sudo", "log", "erase", "--all"},
+	},
 }
 
 // FormatFullCmd returns the complete rm command line string.
 func FormatFullCmd(resolvedPath string) string {
 	return fmt.Sprintf("rm -rf %q", resolvedPath)
+}
+
+// FullCmd returns the shell command to clean this target.
+func (t TargetItem) FullCmd(resolvedPath string) string {
+	if len(t.Cmd) > 0 {
+		return strings.Join(t.Cmd, " ")
+	}
+	return FormatFullCmd(resolvedPath)
+}
+
+func resolveTarget(ctx context.Context, rawPath string) (resolved string, size uint64, err error) {
+	resolved, expandErr := homedir.Expand(os.ExpandEnv(rawPath))
+	if expandErr != nil {
+		resolved = rawPath
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return resolved, 0, err
+	}
+	res, uerr := du.Usage(ctx, du.Options{
+		Paths:        []string{resolved},
+		MaxDepth:     0,
+		ApparentSize: false,
+	})
+	if uerr == nil && res != nil {
+		return resolved, res.GrandTotal.Size, nil
+	}
+	return resolved, uint64(info.Size()), nil
+}
+
+func deleteTarget(ctx context.Context, item TargetItem, resolved string, in io.Reader, out io.Writer) error {
+	if len(item.Cmd) > 0 {
+		cmd := exec.CommandContext(ctx, item.Cmd[0], item.Cmd[1:]...)
+		cmd.Stdin = in
+		cmd.Stdout = out
+		cmd.Stderr = out
+		return cmd.Run()
+	}
+	return os.RemoveAll(resolved)
 }
 
 // HumanSize formats bytes into human-readable units (e.g. 5MB, 10GB, 1KB, 0B).
@@ -114,26 +160,8 @@ func ExecuteDelete(ctx context.Context, in io.Reader, out io.Writer, targets []T
 		default:
 		}
 
-		resolved, expandErr := homedir.Expand(os.ExpandEnv(item.Path))
-		if expandErr != nil {
-			resolved = item.Path
-		}
-		info, err := os.Lstat(resolved)
+		resolved, size, err := resolveTarget(ctx, item.Path)
 		exists := (err == nil)
-
-		var size uint64
-		if exists {
-			res, uerr := du.Usage(ctx, du.Options{
-				Paths:        []string{resolved},
-				MaxDepth:     0,
-				ApparentSize: false,
-			})
-			if uerr == nil && res != nil {
-				size = res.GrandTotal.Size
-			} else if info != nil {
-				size = uint64(info.Size())
-			}
-		}
 
 		icon := "📁 "
 		sizeStr := HumanSize(size)
@@ -147,8 +175,7 @@ func ExecuteDelete(ctx context.Context, in io.Reader, out io.Writer, targets []T
 		if forceYes {
 			fmt.Fprintf(out, "[%d/%d] %s%s, %s, %s\n", i+1, len(targets), icon, resolved, sizeStr, dimDesc)
 			if exists {
-				err := os.RemoveAll(resolved)
-				if err != nil {
+				if err := deleteTarget(ctx, item, resolved, in, out); err != nil {
 					fmt.Fprintf(out, "  -> 刪除失敗: %v\n", err)
 					skippedCount++
 				} else {
@@ -177,8 +204,7 @@ func ExecuteDelete(ctx context.Context, in io.Reader, out io.Writer, targets []T
 					fmt.Fprintln(out, "  -> 目錄不存在 (Not Found)")
 					notFoundCount++
 				} else {
-					err := os.RemoveAll(resolved)
-					if err != nil {
+					if err := deleteTarget(ctx, item, resolved, in, out); err != nil {
 						fmt.Fprintf(out, "  -> 刪除失敗: %v\n", err)
 						skippedCount++
 					} else {

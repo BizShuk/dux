@@ -8,8 +8,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/bizshuk/dux/du"
-	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -54,12 +52,8 @@ func ExecuteList(ctx context.Context, out io.Writer, targets []TargetItem) error
 		default:
 		}
 
-		resolved, expandErr := homedir.Expand(os.ExpandEnv(item.Path))
-		if expandErr != nil {
-			resolved = item.Path
-		}
-		fullCmd := FormatFullCmd(resolved)
-		info, err := os.Lstat(resolved)
+		resolved, size, err := resolveTarget(ctx, item.Path)
+		fullCmd := item.FullCmd(resolved)
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Fprintf(out, "%d. %s\n   路徑: %s\n   指令: %s\n   狀態: 目錄不存在 (Not Found)\n\n", i+1, item.Description, resolved, fullCmd)
@@ -67,19 +61,6 @@ func ExecuteList(ctx context.Context, out io.Writer, targets []TargetItem) error
 			}
 			fmt.Fprintf(out, "%d. %s\n   路徑: %s\n   指令: %s\n   錯誤: 無法存取 (%v)\n\n", i+1, item.Description, resolved, fullCmd, err)
 			continue
-		}
-
-		res, err := du.Usage(ctx, du.Options{
-			Paths:        []string{resolved},
-			MaxDepth:     0,
-			ApparentSize: false,
-		})
-
-		var size uint64
-		if err == nil && res != nil {
-			size = res.GrandTotal.Size
-		} else if info != nil {
-			size = uint64(info.Size())
 		}
 
 		formattedSize := HumanSize(size)

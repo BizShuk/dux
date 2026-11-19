@@ -39,3 +39,4 @@ dux-*
 # Build artifacts
 bin/
 node_modules/
+pnpm-lock.yaml

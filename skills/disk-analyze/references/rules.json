@@ -7,6 +7,8 @@
     { "glob": "/sbin{,/**}", "why": "系統執行檔" },
     { "glob": "/private/var/db{,/**}", "why": "系統資料庫" },
     { "glob": "/Library/Developer/CommandLineTools{,/**}", "why": "系統編譯工具鏈, 不可刪" },
+    { "glob": "/{Users,home}/*/.venv{,/**}", "why": "使用者共用 Python 虛擬環境 (~/.venv), 不可刪" },
+    { "glob": "/root/.venv{,/**}", "why": "使用者共用 Python 虛擬環境 (~/.venv), 不可刪" },
     { "glob": "**/.cache/huggingface{,/**}", "why": "AI 模型權重 (Hugging Face / MLX)，本地服務依賴不可誤刪" },
     { "glob": "**/.gemini{,/**}", "why": "Agent 工具鏈與執行環境" },
     { "glob": "**/.antigravity{,/**}", "why": "Agent IDE 與設定環境" },
@@ -49,6 +51,7 @@
     { "glob": "**/Library/Application Support/*/GPUCache", "why": "Electron GPU cache" },
     { "glob": "**/Library/Application Support/*/logs", "why": "app log" },
     { "glob": "**/Library/Application Support/CrashReporter", "why": "crash log" },
+    { "glob": "/{,private/}var/folders/**/X/*.code_sign_clone", "why": "macOS App 簽章暫存副本 (如 Chrome code_sign_clone), 確認無背景更新即可清除" },
     { "glob": "/var/db/powerlog/Library/PerfPowerTelemetry/BackgroundProcessing", "why": "PowerLog 背景排程遙測 SQLite (正常 <300MB, 會膨脹到 GB 級), sudo rm 後重開機自動重建" }
   ],
   "review": [

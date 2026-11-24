@@ -1,6 +1,8 @@
 ---
 name: disk-analyze
 description: Use when disk space is running low or someone asks what is taking up space, what can be deleted, which folders are largest, or wants to reclaim space on a Mac or Linux box. Triggers on "磁碟快滿了", "空間不夠", "什麼可以刪", "清理磁碟", "disk full", "no space left on device", "largest folders", "top 20 biggest", "what is eating my disk".
+metadata:
+    source: https://github.com/BizShuk/dux
 ---
 
 # disk-analyze
@@ -49,8 +51,11 @@ dux analyze --top 20
 不給參數時自動讀 `~/.config/dux/data/` 裡`最新`的 CSV。輸出分為：
 
 - `候選清單 (Candidates)` — 依大小排序，每行含理由與 mtime，結尾給出`不重複計算`的總可回收量。
-- `人工判斷 (Manual Review)` — 很大但`不能自動判定安全`的項目 (個人文件, VM image, Chrome 模型, 沙盒)。
-- `保護項目 (Protected)` — 系統核心與本機開發關鍵模型 (如 Hugging Face / MLX 模型權重)，嚴禁列入刪除。
+- `人工判斷 (Manual Review)` — 很大但`不能自動判定安全`的項目 (個人文件, VM image, Chrome 模型, 沙盒, 大型 `.git`)。
+- `保護項目 (Protected)` — 系統核心、共用 `~/.venv` 與本機開發關鍵模型 (如 Hugging Face / MLX 模型權重)，嚴禁列入刪除。
+
+> [!NOTE]
+> **歷史紀錄與子目錄檢查**：若本地存在 `references/cleanup-history.md`，分析前先讀取以確認使用者過往保留偏好與突增來源，並可用最近兩份 `~/.config/dux/data/*.csv` 比對異常增長路徑。對於含大量子項的 `whole` 目錄（如 `~/.cache`、`~/Library/Caches`），務必先以 `du -sh <dir>/*` 展開確認，避免誤刪受保護或慣常保留的子目錄。
 
 ---
 
@@ -60,18 +65,19 @@ dux analyze --top 20
 > **精靈互動提問原則**：
 > 1. **1 question for ok to delete**：所有判定為零風險、可自動或隨時安全重建的項目，**統一整合在單一問題中批次確認**。
 > 2. **each question for something need to confirm**：對於具備使用權衡 (Trade-off) 或刪除後需重抓/重置的項目，**每一項必須獨立出一個專屬問題**單獨向使用者確認。
-> 3. **protected assets**：受保護核心資產嚴禁列入任何刪除選項。
+> 3. **protected assets**：受保護核心資產（含 `~/.venv`、`~/.cache/huggingface`）嚴禁列入任何刪除選項。
 
 #### 提問 1：安全項目批次確認 (1 Question for OK to Delete)
-將所有屬於 `whole` 等級的項目（例如：舊版 iOS DeviceSupport 符號、Go build cache、Chrome 網頁暫存、`uv/pnpm/brew/pip` 套件快取、專案 `tmp/`、應用程式日誌 `Library/Logs`）彙總為**一道多選題**：
+將所有屬於 `whole` 等級的項目（例如：舊版 iOS DeviceSupport 符號、Go 編譯/工具快取 `go-build` / `gopls` / `goimports` / `golangci-lint`、Chrome 簽章暫存副本 `/var/folders/**/X/*.code_sign_clone`、Chrome 網頁暫存、`uv/pnpm/brew/pip/npm/bun` 套件快取、專案 `tmp/`、應用程式日誌 `Library/Logs`）彙總為**一道多選題**：
 
 - **呈現方式**：列出項目名稱、路徑與預估容量，並顯示「全選刪除」與個別勾選項。
+- **保留偏好防護**：若 `~/Library/Caches` 或 `~/.cache` 內含使用者慣常保留之應用快取（如 `Homebrew`、`Google`、`Claude`、`Antigravity`、`ms-playwright`），或含受保護資產（`~/.cache/huggingface`），**嚴禁打包成整個父目錄刪除**，必須拆列安全子項或預設不勾選常用應用快取。
 - **範例**：
   > 「以下為可安全釋放的快取與暫存檔（預估釋放 ~12.8 GiB），刪除不影響日常開發與系統運作：
   > [x] iOS DeviceSupport 舊符號 (5.7 GiB)
-  > [x] Go 編譯快取 (1.1 GiB)
-  > [x] Google Chrome 網頁/GPU 快取 (1.2 GiB)
-  > [x] 開發套件快取 uv/pip/pnpm/brew (~2.2 GiB)
+  > [x] Go 編譯與工具快取 go-build/gopls (1.1 GiB)
+  > [x] Chrome 簽章暫存副本 *.code_sign_clone (確認無背景更新)
+  > [x] 開發套件快取 uv/pip/pnpm/npm/bun (~2.2 GiB)
   > [x] 專案 tmp 暫存檔 (866 MiB)
   > [x] 舊版 Xcode 打包檔與應用日誌 (~480 MiB)
   > 是否確認清理已勾選項目？」
@@ -85,6 +91,12 @@ dux analyze --top 20
 - **Google Chrome 本地 AI 模型** (例：4.0 GiB)：
   > 「是否清理 Google Chrome 本地 Gemini Nano 模型 (`OptGuideOnDeviceModel`，約 4.0 GiB)？
   > 說明：若未在瀏覽器中使用 Prompt API (`window.ai`)，可安全刪除；若日後需要該功能，Chrome 會在背景重新下載。」
+- **第三方應用自帶虛擬環境或本地模型快取** (例：`~/Library/Application Support/*/venv-*`、`~/.cache/openwhispr`)：
+  > 「是否清理 `<App>` 內建虛擬環境或下載模型（約 X GiB）？
+  > 說明：刪除後可立即釋放空間，但下次開啟該應用時需重新下載模型或重建 Python 環境。」
+- **大型 `.git` 歷史瘦身（非刪除）** (例：`~/.hermes/hermes-agent/.git` 2.4 GiB)：
+  > 「是否對 `<repo>/.git` 執行 `git reflog expire --expire=now --all && git gc --prune=now`（或 shallow fetch）瘦身？
+  > 說明：保留目前工作樹與遠端追蹤，僅壓縮與清理孤兒 git object；**嚴禁直接 `rm -rf .git`**。」
 - **Xcode Simulator Runtime 與 dyld cache** (例：16~19 GiB)：
   > 「是否清理 Xcode iOS 模擬器 Runtime 與 dyld 共用快取 (約 19.0 GiB)？
   > 說明：若主要使用實體 iPhone 進行真機測試，刪除可釋放巨量空間；日後若需模擬器，需從 Xcode Settings -> Platforms 重新下載。」
@@ -93,12 +105,13 @@ dux analyze --top 20
   > 說明：日後執行 `go build` 或 `go test` 時會自動連網重新拉取依賴。」
 - **4K 動態桌布 / 航拍影片** (例：910 MiB)：
   > 「是否刪除系統自動下載之 4K 航拍螢幕保護程式影片 (`com.apple.wallpaper/aerials`，約 910 MiB)？」
-- **閒置專案的 `node_modules`** (例：各幾百 MB 至 1GB+)：
-  > 「是否清理特定閒置專案之 `node_modules`？需要時執行 `pnpm install` 或 `npm install` 即可還原。」
+- **閒置專案的 `node_modules` 或專案級 `.venv`** (例：各幾百 MB 至 1GB+)：
+  > 「是否清理特定閒置專案之 `node_modules` / 專案內 `.venv`？需要時執行 `pnpm install` / `uv sync` 即可還原（`~/.venv` 不在此列，絕對保留）。」
 - **閒置或無用 Application** (例：Docker.app 2.1 GiB、iWork 1.9 GiB 等)。
 
 #### 嚴格保護清單 (Protected Items — Never Delete)
-以下項目**絕對不提示刪除**，也不得納入精靈選項：
+以下項目**絕對不提示刪除**，也不得納入精靈選項（包含其父目錄若含下列項目，亦嚴禁直接 `rm -rf` 父目錄）：
+- **`~/.venv`**：使用者共用 Python 虛擬環境（含跨專案工具與套件，無單一 lockfile 可重建，在 `rules.json` 中屬於 `keep`）。
 - **`~/.cache/huggingface`**：存放本地語音或 AI 模型（如 `pkg/mlx/` 服務所需之 Qwen3-ASR 與 ForcedAligner 權重）。
 - **`/Library/Developer/CommandLineTools`**：系統編譯與工具鏈核心。
 - **`~/projects/` 原始碼與資料庫**。
@@ -109,7 +122,7 @@ dux analyze --top 20
 
 ### 4. 執行與成效驗證 (Execute & Verify)
 
-1. 根據精靈確認結果執行指定刪除指令。
+1. 根據精靈確認結果執行指定刪除或瘦身指令。
 2. 檢查磁碟剩餘空間前後對照：
    ```bash
    df -h /System/Volumes/Data
@@ -118,6 +131,7 @@ dux analyze --top 20
    ```bash
    sudo rm -rf /Library/Updates/<id>
    ```
+4. 若本地存在 `references/cleanup-history.md`，補記本次清理前後容量、清理項目與使用者保留項目，供下次執行參考。
 
 ## Quick Reference
 
@@ -139,7 +153,7 @@ dux analyze --top 20
 
 | 等級 | 意義 | 對 rollup 的效果 |
 | --- | --- | --- |
-| `keep` | 絕不可刪 (系統分割區, iCloud, 照片圖庫, keychain, CommandLineTools, 本地 AI 模型, app bundle 內部) | `整棵子樹剪掉`，不列候選也不列 review |
+| `keep` | 絕不可刪 (系統分割區, iCloud, 照片圖庫, keychain, CommandLineTools, 共用 `~/.venv`, 本地 AI 模型, app bundle 內部) | `整棵子樹剪掉`，不列候選也不列 review；含 `keep` 子樹的 `whole` 父目錄也會自動降為往下鑽找安全子項 |
 | `whole` | 整個資料夾都是可重建產物 (快取, 暫存, 舊符號) | `列為候選`，並壓掉所有子項目，納入**提問 1 批次確認** |
 | `review` | 大但需要人工判斷 (沙盒, 本地模型, 模擬器, 個人文件) | `永不列為候選`，往下鑽找可刪子項目，納入**後續個別提問確認** |
 
@@ -159,6 +173,8 @@ dux analyze --top 20
 | 將安全項目拆成幾十個問題輪流問 | 使用者體驗極度破碎 | **1 question for ok to delete**：安全項目整合成一題批次確認 |
 | 將需確認的項目打包一次刪 | 使用者在不知情下遺失 VM 沙盒或重新下載大模型 | **each question for something need to confirm**：條件式項目個別獨立出題確認 |
 | 對合併列的錨點目錄下 `rm -rf` | 刪掉整個 Python 或 Containers 目錄 | 合併列先 `--members` 展開，逐個刪 |
+| 對 `~/.venv` 或含 `keep` 子項的 `~/.cache` 下 `rm -rf` | 誤刪共用 Python 環境或本地 AI 模型權重 | `~/.venv` 列為 `keep` 嚴禁刪除；`~/.cache` 須展開子目錄逐一清理，避開 `huggingface` |
+| 直接 `rm -rf` 大型 `.git` 目錄 | 破壞 repo 版本控制與遠端追蹤 | 改用 `git reflog expire` + `git gc --prune=now`（或 shallow fetch）瘦身 |
 | 把 review 段的數字加進可回收總量 | 高估數倍 | 總計`只加候選清單`，review 段不計入 |
 | 用舊的 CSV 下結論 | 已經刪過的東西又出現一次 | 先確認輸出第一行的 CSV 日期，必要時重掃 |
 

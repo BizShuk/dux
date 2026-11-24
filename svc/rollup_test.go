@@ -40,6 +40,30 @@ func TestClassifyPrecedence(t *testing.T) {
 	// Anything unrecognized falls back to human judgement, never to deletion.
 	v, _ = rs.Classify("/Users/x/projects/site/assets")
 	assert.Equal(t, VerdictReview, v)
+
+	// Shared ~/.venv must stay keep on macOS/Linux while project .venv stays whole.
+	for _, p := range []string{"/Users/shuk/.venv", "/Users/shuk/.venv/lib/python3.11", "/home/alice/.venv", "/root/.venv"} {
+		v, _ = rs.Classify(p)
+		assert.Equal(t, VerdictKeep, v, "path %s must be protected", p)
+	}
+	v, _ = rs.Classify("/Users/shuk/projects/app/.venv")
+	assert.Equal(t, VerdictWhole, v)
+
+	// macOS codesign staging clones under /var/folders are whole-deletable.
+	v, _ = rs.Classify("/var/folders/c9/bc7cqdld2ps6g6225dl6f8_w0000gn/X/com.google.Chrome.code_sign_clone")
+	assert.Equal(t, VerdictWhole, v)
+}
+
+func TestRollupDoesNotEmitWholeParentContainingKeepChild(t *testing.T) {
+	rows := []ReportEntry{
+		entry("/Users/x/.cache", 10<<30),
+		entry("/Users/x/.cache/huggingface", 9<<30),
+		entry("/Users/x/.cache/uv", 500<<20),
+	}
+	res := Rollup(rows, testRules(t), RollupOptions{Top: 10, ReviewTop: -1})
+
+	assert.Equal(t, []string{"/Users/x/.cache/uv"}, paths(res.Candidates))
+	assert.Equal(t, int64(500<<20), res.Total, "whole parent containing keep child must drill down instead of deleting keep")
 }
 
 func TestRollupSuppressesDescendantsOfWholeCandidates(t *testing.T) {

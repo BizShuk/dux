@@ -185,6 +185,11 @@ func Rollup(entries []ReportEntry, rs *RuleSet, opts RollupOptions) RollupResult
 		if pathUnderAny(c.entry.Path, kept) {
 			continue // inside a keep subtree
 		}
+		// Never mark a directory as whole-deletable when a protected (keep) subtree
+		// sits inside it; downgrade to review so Rollup drills into safe siblings.
+		if c.verdict == VerdictWhole && anyPathUnder(kept, c.entry.Path) {
+			c.verdict = VerdictReview
+		}
 		live = append(live, c)
 	}
 
@@ -369,6 +374,15 @@ func pathUnder(child, parent string) bool {
 func pathUnderAny(child string, parents []string) bool {
 	for _, p := range parents {
 		if child == p || pathUnder(child, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyPathUnder(children []string, parent string) bool {
+	for _, ch := range children {
+		if pathUnder(ch, parent) {
 			return true
 		}
 	}

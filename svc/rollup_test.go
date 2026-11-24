@@ -41,8 +41,15 @@ func TestClassifyPrecedence(t *testing.T) {
 	v, _ = rs.Classify("/Users/x/projects/site/assets")
 	assert.Equal(t, VerdictReview, v)
 
-	// Shared ~/.venv must stay keep on macOS/Linux while project .venv stays whole.
-	for _, p := range []string{"/Users/shuk/.venv", "/Users/shuk/.venv/lib/python3.11", "/home/alice/.venv", "/root/.venv"} {
+	// Shared ~/.venv and uv-managed Python runtimes (~/.local/share/uv) must stay keep.
+	for _, p := range []string{
+		"/Users/shuk/.venv",
+		"/Users/shuk/.venv/lib/python3.11",
+		"/home/alice/.venv",
+		"/root/.venv",
+		"/Users/shuk/.local/share/uv",
+		"/Users/shuk/.local/share/uv/python/cpython-3.11",
+	} {
 		v, _ = rs.Classify(p)
 		assert.Equal(t, VerdictKeep, v, "path %s must be protected", p)
 	}
